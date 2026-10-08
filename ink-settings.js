@@ -8,9 +8,13 @@ export const DEFAULTS = {
     theme: 'auto',            // auto = follows the app theme
     customBg: '#f6f1e4', customFg: '#24211b',
     font: 'serif',            // serif | sans | humanist | mono | dyslexic
-    size: 19, lineHeight: 1.6, letterSpacing: 0, paraSpacing: 0.7, margin: 22, align: 'left', columnWidth: 640,
+    size: 19, lineHeight: 1.6, letterSpacing: 0, wordSpacing: 0, paraSpacing: 0.7,
+    firstLineIndent: 0,       // em
+    margin: 22, align: 'left', columnWidth: 640,
     flow: 'paged',            // paged | scroll
     autoHide: true, tapNav: true,
+    chapterStop: false,       // stop at chapter end and offer Continue
+    showTimeLeft: true,
     direction: 'ltr',         // default direction for comics
   },
   library: { view: 'grid', sort: 'added', sortDir: 'desc', gridSize: 'm', group: true, filter: 'all', showProgress: true },
@@ -125,6 +129,33 @@ export const FONT_STACKS = {
   mono: 'ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace',
   dyslexic: 'OpenDyslexic, "Lexend", "Atkinson Hyperlegible", "Comic Sans MS", Verdana, sans-serif',
 };
-export function readingFontStack() {
-  return FONT_STACKS[state.app.dyslexia ? 'dyslexic' : state.reading.font] || FONT_STACKS.serif;
+export function readingFontStack(override) {
+  const font = override?.font ?? state.reading.font;
+  return FONT_STACKS[state.app.dyslexia ? 'dyslexic' : font] || FONT_STACKS.serif;
+}
+
+/** Keys that can be overridden per-book */
+export const BOOK_PREF_KEYS = [
+  'theme', 'customBg', 'customFg', 'font', 'size', 'lineHeight', 'letterSpacing', 'wordSpacing',
+  'firstLineIndent', 'paraSpacing', 'margin', 'align', 'columnWidth', 'flow', 'chapterStop', 'tapNav', 'showTimeLeft',
+];
+
+/** Merge global reading settings with optional per-book overrides */
+export function effectiveReading(bookPrefs) {
+  const base = { ...state.reading };
+  if (!bookPrefs || typeof bookPrefs !== 'object') return base;
+  for (const k of BOOK_PREF_KEYS) {
+    if (bookPrefs[k] !== undefined && bookPrefs[k] !== null) base[k] = bookPrefs[k];
+  }
+  return base;
+}
+
+export function readingThemeFor(prefs) {
+  const r = prefs || state.reading;
+  if (r.theme === 'custom') return { name: 'Custom', bg: r.customBg, fg: r.customFg, link: r.customFg, muted: r.customFg };
+  if (r.theme === 'auto') {
+    const t = resolvedTheme();
+    return READING_THEMES[t === 'light' ? 'light' : t === 'oled' ? 'oled' : 'dark'];
+  }
+  return READING_THEMES[r.theme] || READING_THEMES.light;
 }

@@ -18,7 +18,7 @@ import { hlColor } from './ink-reader.js';
 import { segmented, slider, toggleRow, field, group, swatches, toast, promptDialog, confirmDialog, motionOK, topSheet } from './ink-ui.js';
 
 const WPM = 230, CHARS_PER_WORD = 5.7;
-const RELAYOUT_KEYS = new Set(['reading.font', 'reading.size', 'reading.lineHeight', 'reading.letterSpacing', 'reading.paraSpacing', 'reading.margin', 'reading.align', 'reading.columnWidth', 'reading.flow', 'app.dyslexia']);
+const RELAYOUT_KEYS = new Set(['reading.font', 'reading.size', 'reading.lineHeight', 'reading.letterSpacing', 'reading.wordSpacing', 'reading.firstLineIndent', 'reading.paraSpacing', 'reading.margin', 'reading.align', 'reading.columnWidth', 'reading.flow', 'app.dyslexia']);
 const THEME_KEYS = new Set(['reading.theme', 'reading.customBg', 'reading.customFg', 'app.theme', 'app.system']);
 
 export async function open({ book, blob, host, api, saved, gotoQuery }) {
@@ -31,9 +31,15 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   const cum = []; let TOTAL = 0; for (const z of sizes) { cum.push(TOTAL); TOTAL += z; }
   const rtlBook = !!pkg.rtl || /^(ar|he|fa|ur|yi)\b/i.test(pkg.language || '');
   const nx = rtlBook ? -1 : 1;                       // screen direction of "next" (+1 = to the right)
-  const R = () => settings.get('reading');
+  let bookPrefs = book.readingPrefs || null;
+  const R = () => settings.effectiveReading(bookPrefs);
   const flowMode = () => (R().flow === 'scroll' ? 'scroll' : 'paged');
   let destroyed = false;
+  const setBookPref = async (key, value) => {
+    bookPrefs = { ...(bookPrefs || {}), [key]: value };
+    book.readingPrefs = bookPrefs;
+    try { const { saveReadingPrefs } = await import('./ink-lib.js'); await saveReadingPrefs(book.id, { [key]: value }); } catch { /* ignore */ }
+  };
 
   /* ---------- DOM ---------- */
   const view = h('div', { class: 'ep-view' });
@@ -46,11 +52,13 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   host.replaceChildren(root);
 
   function applyVars() {
-    const r = R(), t = settings.readingTheme(), st = root.style;
+    const r = R(), t = settings.readingThemeFor(r), st = root.style;
     st.setProperty('--ep-bg', t.bg); st.setProperty('--ep-fg', t.fg); st.setProperty('--ep-link', t.link);
-    st.setProperty('--ep-font', settings.readingFontStack());
+    st.setProperty('--ep-font', settings.readingFontStack(r));
     st.setProperty('--ep-size', String(r.size)); st.setProperty('--ep-lh', String(r.lineHeight));
-    st.setProperty('--ep-ls', String(r.letterSpacing)); st.setProperty('--ep-align', r.align);
+    st.setProperty('--ep-ls', String(r.letterSpacing)); st.setProperty('--ep-ws', String(r.wordSpacing || 0));
+    st.setProperty('--ep-indent', String(r.firstLineIndent || 0));
+    st.setProperty('--ep-align', r.align);
     st.setProperty('--ep-para', String(r.paraSpacing)); st.setProperty('--ep-m', r.margin + 'px');
     host.style.setProperty('--rd-bg', t.bg);
   }
@@ -110,7 +118,17 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       const s = hrefToS.get(it.href.split('#')[0]);
       if (s == null) continue;
       const id = fragmentOf(it.href);
-      out.push({ label: it.label, depth: it.level, s, id, location: { s, f: 0, id: id || undefined } });
+      out.push({
+        label: it.label,
+        depth: it.level || 0,
+        s,
+        id,
+        source: it.source || 'nav',
+        location: { s, f: 0, id: id || undefined },
+      });
+    }
+    for (let i = 0; i < out.length; i++) {
+      out[i].hasChildren = i + 1 < out.length && out[i + 1].depth > out[i].depth;
     }
     tocFlat = out;
     return out;
@@ -292,7 +310,26 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     hudChapter.textContent = ch?.label || '';
     hudPage.textContent = pageText;
     hudPct.textContent = Math.round(progress * 100) + '%';
-    api.relocate({ location: { s, f: +fS.toFixed(5), a }, progress, label, sub: `${Math.round(progress * 100)}% · ${progress >= 1 ? 'finished' : fmtMinutes(mins) + ' left'}`, turned });
+    const showTime = R().showTimeLeft !== false;
+    const sub = progress >= 1 ? `${Math.round(progress * 100)}% · finished`
+      : showTime ? `${Math.round(progress * 100)}% · ${fmtMinutes(mins)} left`
+      : `${Math.round(progress * 100)}%`;
+    api.relocate({ location: { s, f: +fS.toFixed(5), a }, progress, label, sub, turned });
+  }
+
+  /** Approximate progress (0–1) for a TOC entry relative to the next entry / end of book */
+  function chapterProgress(idx) {
+    if (!tocFlat.length || idx < 0 || idx >= tocFlat.length) return 0;
+    const e = tocFlat[idx];
+    const startByte = cum[e.s] + sizes[e.s] * 0; // chapter start ≈ section start (anchors resolved lazily)
+    const next = tocFlat[idx + 1];
+    const endByte = next ? cum[next.s] : TOTAL;
+    const span = Math.max(1, endByte - startByte);
+    if (!lastPos) return 0;
+    const here = cum[lastPos.s] + sizes[lastPos.s] * (loadedSecs.get(lastPos.s)?.total ? lastPos.a / loadedSecs.get(lastPos.s).total : 0);
+    if (here < startByte) return 0;
+    if (here >= endByte) return 1;
+    return clamp((here - startByte) / span, 0, 1);
   }
   const reportSoon = debounce(() => report(true), 40);
   function afterTurn() {
@@ -402,6 +439,21 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     let target = dir > 0 ? units.next : units.prev;
     if (!target && nbPromise) { await nbPromise; target = dir > 0 ? units.next : units.prev; }
     if (!target) { snapBack(); if (dir > 0) toast('You’ve reached the end'); return false; }
+    // Optional: stop at chapter boundary and offer Continue
+    if (dir > 0 && R().chapterStop && lastPos) {
+      const curCh = chapterIndexAt(lastPos.s, lastPos.a);
+      const nextA = target.part?.base ?? 0;
+      const nextCh = chapterIndexAt(target.s, nextA);
+      if (nextCh > curCh && curCh >= 0) {
+        snapBack();
+        const nxt = tocFlat[nextCh];
+        const label = nxt?.label || 'next chapter';
+        if (await confirmDialog({ title: 'End of chapter', message: `Continue to “${label}”?`, confirmLabel: 'Continue', cancelLabel: 'Stay' })) {
+          goTo(nxt?.location || { s: target.s, f: 0 });
+        }
+        return false;
+      }
+    }
     busy = true;
     target.page = dir > 0 ? 0 : target.pages - 1;
     setPageTransform(target, target.page, false);
@@ -776,6 +828,62 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   });
   ro.observe(root);
 
+  /* ---------- settings panel (uses per-book overrides) ---------- */
+  function buildSettingsPanel() {
+    const fonts = [['serif', 'Serif'], ['sans', 'Sans'], ['humanist', 'Humanist'], ['mono', 'Mono']];
+    const S = (k, v) => { setBookPref(k, v); applyVars(); if (RELAYOUT_KEYS.has('reading.' + k) || k === 'flow') relayout(); };
+    // also write to global so new books inherit last choices
+    const Sg = (k, v) => { settings.set('reading.' + k, v); setBookPref(k, v); };
+    const fontGrid = h('div', { class: 'font-grid' }, fonts.map(([k, label]) => h('button', {
+      class: 'font-btn' + (R().font === k ? ' on' : ''), style: { fontFamily: settings.FONT_STACKS[k] },
+      onclick: (e) => { Sg('font', k); [...fontGrid.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget)); },
+    }, label)));
+    const themeItems = [{ value: 'auto', label: 'Auto', bg: 'linear-gradient(135deg,#f8f6f0 50%,#1e1e21 50%)', fg: '#888' }]
+      .concat(Object.entries(settings.READING_THEMES).map(([value, t]) => ({ value, label: t.name, bg: t.bg, fg: t.fg })))
+      .concat([{ value: 'custom', label: 'Custom', bg: R().customBg, fg: R().customFg }]);
+    const picker = (label, key) => {
+      const i = h('input', { type: 'color', class: 'color-input', value: R()[key], 'aria-label': label });
+      i.addEventListener('input', () => { Sg(key, i.value); applyVars(); });
+      return h('div', null, h('div', { class: 'field-label' }, label), i);
+    };
+    const custom = h('div', { style: { display: R().theme === 'custom' ? 'grid' : 'none', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' } },
+      picker('Background', 'customBg'), picker('Text', 'customFg'));
+    const wrap = h('div');
+    const sliders = {
+      size: slider({ label: 'Text size', min: 12, max: 38, step: 1, value: R().size, format: (v) => v + ' px', onInput: (v) => Sg('size', v) }),
+      lineHeight: slider({ label: 'Line spacing', min: 1.2, max: 2.3, step: 0.05, value: R().lineHeight, format: (v) => v.toFixed(2), onInput: (v) => Sg('lineHeight', +v.toFixed(2)) }),
+      letterSpacing: slider({ label: 'Letter spacing', min: 0, max: 0.14, step: 0.01, value: R().letterSpacing, format: (v) => v.toFixed(2) + ' em', onInput: (v) => Sg('letterSpacing', +v.toFixed(2)) }),
+      wordSpacing: slider({ label: 'Word spacing', min: 0, max: 0.4, step: 0.02, value: R().wordSpacing || 0, format: (v) => v.toFixed(2) + ' em', onInput: (v) => Sg('wordSpacing', +v.toFixed(2)) }),
+      firstLineIndent: slider({ label: 'First-line indent', min: 0, max: 3, step: 0.25, value: R().firstLineIndent || 0, format: (v) => v.toFixed(2) + ' em', onInput: (v) => Sg('firstLineIndent', +v.toFixed(2)) }),
+      paraSpacing: slider({ label: 'Paragraph spacing', min: 0, max: 1.8, step: 0.1, value: R().paraSpacing, format: (v) => v.toFixed(1) + ' em', onInput: (v) => Sg('paraSpacing', +v.toFixed(1)) }),
+      margin: slider({ label: 'Margins', min: 4, max: 80, step: 2, value: R().margin, format: (v) => v + ' px', onInput: (v) => Sg('margin', v) }),
+      columnWidth: slider({ label: 'Text width', min: 360, max: 1000, step: 20, value: R().columnWidth, format: (v) => v + ' px', onInput: (v) => Sg('columnWidth', v) }),
+    };
+    const alignSeg = segmented([{ value: 'left', label: 'Left' }, { value: 'justify', label: 'Justified' }], R().align, (v) => Sg('align', v));
+    const flowSeg = segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], R().flow, (v) => Sg('flow', v));
+    const themeSw = swatches(themeItems, R().theme, (v) => { Sg('theme', v); custom.style.display = v === 'custom' ? 'grid' : 'none'; applyVars(); });
+    wrap.append(
+      group('Page', field('Reading style', flowSeg), field('Theme', themeSw), custom,
+        toggleRow({ label: 'Stop at chapter end', value: !!R().chapterStop, onChange: (v) => Sg('chapterStop', v) }),
+        toggleRow({ label: 'Tap sides to turn page', value: R().tapNav !== false, onChange: (v) => Sg('tapNav', v) }),
+        toggleRow({ label: 'Auto-hide controls', value: R().autoHide !== false, onChange: (v) => { Sg('autoHide', v); settings.set('reading.autoHide', v); } }),
+        toggleRow({ label: 'Show time remaining', value: R().showTimeLeft !== false, onChange: (v) => { Sg('showTimeLeft', v); report(false); } })),
+      group('Text', field('Font', fontGrid), sliders.size, sliders.lineHeight, sliders.paraSpacing, sliders.letterSpacing, sliders.wordSpacing, sliders.firstLineIndent, field('Alignment', alignSeg),
+        toggleRow({ label: 'Dyslexia-friendly font', value: settings.get('app.dyslexia'), onChange: (v) => { settings.set('app.dyslexia', v); applyVars(); relayout(); } })),
+      group('Layout', sliders.margin, sliders.columnWidth),
+      h('button', { class: 'btn ghost', style: { marginTop: '18px' }, onclick: async () => {
+        const d = settings.DEFAULTS.reading;
+        for (const k of settings.BOOK_PREF_KEYS) { settings.set('reading.' + k, d[k]); }
+        bookPrefs = null; book.readingPrefs = null;
+        try { const { clearReadingPrefs } = await import('./ink-lib.js'); await clearReadingPrefs(book.id); } catch { /* ignore */ }
+        applyVars(); relayout();
+        Object.entries(sliders).forEach(([k, el]) => el.set?.(d[k] ?? 0));
+        alignSeg.set(d.align); flowSeg.set?.(d.flow);
+        [...fontGrid.children].forEach((b, i) => b.classList.toggle('on', fonts[i][0] === d.font));
+      } }, 'Reset to defaults'));
+    return wrap;
+  }
+
   /* ---------- open at the saved place ---------- */
   const start = saved && typeof saved === 'object' && Number.isInteger(saved.s) ? { s: clamp(saved.s, 0, spine.length - 1), f: saved.f, a: saved.a } : { s: 0, f: 0 };
   const startFind = gotoQuery && start.a != null ? { s: start.s, a: start.a, n: gotoQuery.length } : null;
@@ -822,7 +930,24 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       return [ch, snip ? '“' + snip.slice(0, 64) + (snip.length > 64 ? '…' : '') + '”' : ''].filter(Boolean).join(' — ') || 'Bookmark';
     },
     search,
-    settingsPanel,
+    settingsPanel: buildSettingsPanel,
+    chapterProgress,
+    packageInfo: () => ({
+      title: pkg.title || book.title,
+      authors: pkg.authors?.length ? pkg.authors : (book.author ? [book.author] : []),
+      publisher: pkg.publisher || book.meta?.publisher || '',
+      pubDate: pkg.pubDate || book.meta?.pubDate || '',
+      language: pkg.language || book.meta?.language || '',
+      description: pkg.description || book.meta?.description || '',
+      series: pkg.series || book.series || '',
+      seriesIndex: pkg.seriesIndex ?? book.seriesNumber,
+      chapters: tocFlat.length,
+      spineItems: spine.length,
+      version: pkg.version,
+      rtl: rtlBook,
+      size: book.size,
+      format: 'EPUB',
+    }),
     onChrome: () => {},
     destroy() {
       destroyed = true;
@@ -871,46 +996,6 @@ function firstCharWhere(partEl, pred, total) {
   }
   if (a < len) return nodes[idx].start + a;
   return idx + 1 < nodes.length ? nodes[idx + 1].start + first(idx + 1) : total;
-}
-
-/* ---------------- settings panel ---------------- */
-function settingsPanel() {
-  const R = () => settings.get('reading');
-  const S = (k, v) => settings.set('reading.' + k, v);
-  const fonts = [['serif', 'Serif'], ['sans', 'Sans'], ['humanist', 'Humanist'], ['mono', 'Mono']];
-  const fontGrid = h('div', { class: 'font-grid' }, fonts.map(([k, label]) => h('button', {
-    class: 'font-btn' + (R().font === k ? ' on' : ''), style: { fontFamily: settings.FONT_STACKS[k] },
-    onclick: (e) => { S('font', k); [...fontGrid.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget)); },
-  }, label)));
-  const themeItems = [{ value: 'auto', label: 'Auto', bg: 'linear-gradient(135deg,#f8f6f0 50%,#1e1e21 50%)', fg: '#888' }]
-    .concat(Object.entries(settings.READING_THEMES).map(([value, t]) => ({ value, label: t.name, bg: t.bg, fg: t.fg })))
-    .concat([{ value: 'custom', label: 'Custom', bg: R().customBg, fg: R().customFg }]);
-  const picker = (label, key) => { const i = h('input', { type: 'color', class: 'color-input', value: R()[key], 'aria-label': label }); i.addEventListener('input', () => S(key, i.value)); return h('div', null, h('div', { class: 'field-label' }, label), i); };
-  const custom = h('div', { style: { display: R().theme === 'custom' ? 'grid' : 'none', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' } }, picker('Background', 'customBg'), picker('Text', 'customFg'));
-  const wrap = h('div');
-  const sliders = {
-    size: slider({ label: 'Text size', min: 12, max: 38, step: 1, value: R().size, format: (v) => v + ' px', onInput: (v) => S('size', v) }),
-    lineHeight: slider({ label: 'Line spacing', min: 1.2, max: 2.3, step: 0.05, value: R().lineHeight, format: (v) => v.toFixed(2), onInput: (v) => S('lineHeight', +v.toFixed(2)) }),
-    letterSpacing: slider({ label: 'Letter spacing', min: 0, max: 0.14, step: 0.01, value: R().letterSpacing, format: (v) => v.toFixed(2) + ' em', onInput: (v) => S('letterSpacing', +v.toFixed(2)) }),
-    paraSpacing: slider({ label: 'Paragraph spacing', min: 0, max: 1.8, step: 0.1, value: R().paraSpacing, format: (v) => v.toFixed(1) + ' em', onInput: (v) => S('paraSpacing', +v.toFixed(1)) }),
-    margin: slider({ label: 'Margins', min: 4, max: 80, step: 2, value: R().margin, format: (v) => v + ' px', onInput: (v) => S('margin', v) }),
-    columnWidth: slider({ label: 'Text width', min: 360, max: 1000, step: 20, value: R().columnWidth, format: (v) => v + ' px', onInput: (v) => S('columnWidth', v) }),
-  };
-  const alignSeg = segmented([{ value: 'left', label: 'Left' }, { value: 'justify', label: 'Justified' }], R().align, (v) => S('align', v));
-  const flowSeg = segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], R().flow, (v) => S('flow', v));
-  const themeSw = swatches(themeItems, R().theme, (v) => { S('theme', v); custom.style.display = v === 'custom' ? 'grid' : 'none'; });
-  wrap.append(
-    group('Page', field('Reading style', flowSeg), field('Theme', themeSw), custom),
-    group('Text', field('Font', fontGrid), sliders.size, sliders.lineHeight, sliders.paraSpacing, sliders.letterSpacing, field('Alignment', alignSeg),
-      toggleRow({ label: 'Dyslexia-friendly font', value: settings.get('app.dyslexia'), onChange: (v) => settings.set('app.dyslexia', v) })),
-    group('Layout', sliders.margin, sliders.columnWidth),
-    h('button', { class: 'btn ghost', style: { marginTop: '18px' }, onclick: () => {
-      const d = settings.DEFAULTS.reading;
-      for (const k of ['font', 'size', 'lineHeight', 'letterSpacing', 'paraSpacing', 'margin', 'align', 'columnWidth']) S(k, d[k]);
-      Object.entries(sliders).forEach(([k, el]) => el.set(d[k]));
-      alignSeg.set(d.align); [...fontGrid.children].forEach((b, i) => b.classList.toggle('on', fonts[i][0] === d.font));
-    } }, 'Reset text settings'));
-  return wrap;
 }
 
 /* ---------------- search (shared with library-wide search) ---------------- */

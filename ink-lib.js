@@ -170,6 +170,27 @@ export async function saveProgress(id, { location, progress, label }) {
   const saved = await db.patchBook(id, patch, { silent: true });
   if (b && saved) Object.assign(b, saved);
 }
+
+/** Per-book reading preference overrides (partial object of reading.* keys) */
+export async function saveReadingPrefs(id, prefs) {
+  const b = byId(id) || await db.getBook(id);
+  if (!b) return null;
+  const next = { ...(b.readingPrefs || {}), ...prefs };
+  // drop keys that match global defaults to keep storage small
+  const { DEFAULTS } = await import('./ink-settings.js');
+  for (const k of Object.keys(next)) {
+    if (next[k] === DEFAULTS.reading[k]) delete next[k];
+  }
+  const saved = await db.patchBook(id, { readingPrefs: next }, { silent: true });
+  if (b && saved) Object.assign(b, saved);
+  return saved;
+}
+export async function clearReadingPrefs(id) {
+  const saved = await db.patchBook(id, { readingPrefs: null }, { silent: true });
+  const b = byId(id);
+  if (b && saved) Object.assign(b, saved);
+  return saved;
+}
 export async function touchOpened(id) {
   const saved = await db.patchBook(id, { lastOpened: Date.now() }, { silent: true });
   const b = byId(id);

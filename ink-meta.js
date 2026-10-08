@@ -71,7 +71,7 @@ const text1 = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
 /* ---------------- EPUB package ---------------- */
 /** Reads container.xml + the OPF. Never throws on odd books; returns what it can. */
 export async function loadEpubPackage(zip) {
-  const pkg = { opfPath: '', base: '', title: '', authors: [], language: '', series: '', seriesIndex: null, manifest: {}, spine: [], coverHref: '', navHref: '', ncxHref: '', rtl: false, description: '', version: 2 };
+  const pkg = { opfPath: '', base: '', title: '', authors: [], language: '', series: '', seriesIndex: null, publisher: '', pubDate: '', manifest: {}, spine: [], coverHref: '', navHref: '', ncxHref: '', rtl: false, description: '', version: 2 };
   let opfPath = '';
   try {
     const cx = parseXML(await zip.text('META-INF/container.xml'));
@@ -92,6 +92,8 @@ export async function loadEpubPackage(zip) {
     pkg.authors = ns(md, 'creator').map(text1).filter(Boolean);
     pkg.language = text1(ns(md, 'language')[0]);
     pkg.description = text1(ns(md, 'description')[0]).slice(0, 600);
+    pkg.publisher = text1(ns(md, 'publisher')[0]);
+    pkg.pubDate = text1(ns(md, 'date')[0]).slice(0, 32);
     const metas = ns(md, 'meta');
     for (const m of metas) {
       const name = m.getAttribute('name');
@@ -141,7 +143,8 @@ export async function loadEpubPackage(zip) {
   return pkg;
 }
 
-/** Table of contents: EPUB3 nav first, then NCX. Items: {label, href(path#frag), level} */
+/** Table of contents: EPUB3 nav first, then NCX, then spine-based fallback.
+ *  Items: {label, href(path#frag), level, source:'nav'|'ncx'|'spine'} */
 export async function loadEpubToc(zip, pkg) {
   const items = [];
   try {
@@ -156,7 +159,7 @@ export async function loadEpubToc(zip, pkg) {
           const a = li.querySelector(':scope > a, :scope > span');
           const sub = li.querySelector(':scope > ol');
           const href = a?.getAttribute?.('href');
-          if (a) items.push({ label: text1(a), href: href ? resolvePath(base, href) + (href.includes('#') ? '#' + fragmentOf(href) : '') : '', level });
+          if (a) items.push({ label: text1(a), href: href ? resolvePath(base, href) + (href.includes('#') ? '#' + fragmentOf(href) : '') : '', level, source: 'nav' });
           if (sub) walk(sub, level + 1);
         }
       };
@@ -172,13 +175,31 @@ export async function loadEpubToc(zip, pkg) {
         for (const np of [...parent.children].filter((c) => c.localName === 'navPoint')) {
           const label = text1(ns(np, 'text')[0]);
           const src = ns(np, 'content')[0]?.getAttribute('src') || '';
-          items.push({ label, href: src ? resolvePath(base, src) + (src.includes('#') ? '#' + fragmentOf(src) : '') : '', level });
+          items.push({ label, href: src ? resolvePath(base, src) + (src.includes('#') ? '#' + fragmentOf(src) : '') : '', level, source: 'ncx' });
           walk(np, level + 1);
         }
       };
       const map = ns(doc.documentElement, 'navMap')[0];
       if (map) walk(map, 0);
     } catch { /* no toc */ }
+  }
+  // Fallback: one entry per spine document, labelled from the first heading or filename
+  if (!items.length && pkg.spine?.length) {
+    for (const it of pkg.spine) {
+      let label = '';
+      try {
+        const raw = await zip.text(it.href);
+        const doc = new DOMParser().parseFromString(raw, 'text/html');
+        const h = doc.querySelector('h1, h2, h3, [epub\\:type*="title"], .chapter-title, .title');
+        label = text1(h);
+      } catch { /* ignore */ }
+      if (!label) {
+        const base = (it.href.split('/').pop() || it.href).replace(/\.(xhtml|html|htm)$/i, '');
+        label = base.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || `Section ${items.length + 1}`;
+      }
+      // Skip pure front-matter boilerplate labels that add no navigation value when alone
+      items.push({ label, href: it.href, level: 0, source: 'spine' });
+    }
   }
   return items.filter((i) => i.label);
 }

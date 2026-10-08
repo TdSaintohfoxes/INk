@@ -149,6 +149,7 @@ export async function mountReader(root, book, { exit }) {
     const tabs = [{ value: 'toc', label: book.format === 'comic' ? 'Pages' : 'Contents' }, { value: 'marks', label: 'Bookmarks' }];
     if (hasHl) tabs.push({ value: 'hl', label: 'Highlights' });
     if (hasThumbs && book.format !== 'comic') tabs.splice(1, 0, { value: 'thumbs', label: 'Pages' });
+    if (book.format === 'epub' || ctl?.packageInfo) tabs.push({ value: 'info', label: 'Info' });
     const view = h('div', { class: 'panel-view' });
     let tab = start || (book.format === 'comic' ? 'thumbs' : 'toc');
     if (book.format === 'comic') { tabs[0] = { value: 'thumbs', label: 'Pages' }; if (ctl.toc?.length) tabs.splice(1, 0, { value: 'toc', label: 'Chapters' }); }
@@ -159,23 +160,142 @@ export async function mountReader(root, book, { exit }) {
       if (tab === 'toc') drawToc(view, () => sheet.close());
       else if (tab === 'marks') drawMarks(view, () => sheet.close());
       else if (tab === 'hl') drawHighlights(view, () => sheet.close());
+      else if (tab === 'info') drawBookInfo(view);
       else drawThumbs(view, () => sheet.close());
     };
     sheet = openSheet({ title: book.title, size: 'l', className: 'panel', body: () => { draw(); return h('div', null, h('div', { class: 'panel-tabs' }, seg), view); } });
   }
 
+  function drawBookInfo(view) {
+    const info = ctl?.packageInfo?.() || {};
+    const rows = [
+      ['Title', info.title || book.title],
+      ['Author', (info.authors || []).join(', ') || book.author || '—'],
+      ['Series', info.series ? (info.seriesIndex != null ? `${info.series} · ${info.seriesIndex}` : info.series) : (book.series || '')],
+      ['Publisher', info.publisher || book.meta?.publisher || ''],
+      ['Published', info.pubDate || book.meta?.pubDate || ''],
+      ['Language', info.language || book.meta?.language || ''],
+      ['Chapters', info.chapters || ''],
+      ['Format', info.format || book.format?.toUpperCase() || ''],
+      ['File size', book.size ? (book.size > 1048576 ? (book.size / 1048576).toFixed(1) + ' MB' : Math.round(book.size / 1024) + ' KB') : ''],
+      ['Progress', Math.round((book.progress || 0) * 100) + '%'],
+      ['Added', book.dateAdded ? new Date(book.dateAdded).toLocaleDateString() : ''],
+      ['Last opened', book.lastOpened ? new Date(book.lastOpened).toLocaleDateString() : ''],
+    ].filter(([, v]) => v !== '' && v != null);
+    const list = h('div', { class: 'book-info' });
+    for (const [k, v] of rows) list.append(h('div', { class: 'info-row' }, h('div', { class: 'info-k' }, k), h('div', { class: 'info-v' }, String(v))));
+    if (info.description) list.append(h('div', { class: 'info-desc' }, info.description));
+    // Export annotations
+    list.append(h('button', { class: 'btn ghost', style: { marginTop: '16px' }, onclick: () => exportAnnotations() }, 'Export highlights & bookmarks'));
+    view.append(list);
+  }
+
+  async function exportAnnotations() {
+    const [bms, hls] = await Promise.all([db.listBookmarks(book.id), db.listHighlights(book.id)]);
+    if (!bms.length && !hls.length) { toast('No annotations to export'); return; }
+    let md = `# ${book.title}\n`;
+    if (book.author) md += `*${book.author}*\n`;
+    md += `\n`;
+    if (bms.length) {
+      md += `## Bookmarks\n\n`;
+      for (const m of bms) md += `- **${m.title || 'Bookmark'}** (${new Date(m.createdAt).toLocaleDateString()})\n`;
+      md += `\n`;
+    }
+    if (hls.length) {
+      md += `## Highlights\n\n`;
+      for (const x of hls) {
+        md += `> ${x.text}\n`;
+        if (x.note) md += `\n*Note: ${x.note}*\n`;
+        md += `\n— ${[x.label, new Date(x.createdAt).toLocaleDateString()].filter(Boolean).join(' · ')}\n\n`;
+      }
+    }
+    try {
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const a = h('a', { href: URL.createObjectURL(blob), download: (book.title || 'annotations').replace(/[^\w\- ]+/g, '').slice(0, 60) + ' — annotations.md' });
+      document.body.append(a); a.click(); a.remove();
+      toast('Annotations exported');
+    } catch { toast('Couldn’t export'); }
+  }
+
   async function drawToc(view, close) {
     const toc = await ctl.toc;
-    if (!toc || !toc.length) { view.append(h('div', { class: 'hint-card' }, 'This book has no table of contents.')); return; }
-    const list = h('div', { class: 'toc' });
-    let here = null;
-    for (const t of toc) {
-      const b = h('button', { class: 'toc-item d' + Math.min(t.depth || 0, 3), onclick: () => { close(); ctl.goTo(t.location); } }, h('span', null, t.label));
-      b._t = t;
-      list.append(b);
+    if (!toc || !toc.length) {
+      view.append(h('div', { class: 'hint-card' }, 'No table of contents found. You can still seek with the progress bar.'));
+      return;
     }
+    const list = h('div', { class: 'toc' });
+    const collapsed = new Set(); // depths that are collapsed under a parent index
+    const rows = [];
+
+    const isHidden = (i) => {
+      for (let j = i - 1; j >= 0; j--) {
+        if (toc[j].depth < toc[i].depth) {
+          if (collapsed.has(j)) return true;
+          // keep walking up; only hide if an ancestor is collapsed
+        } else if (toc[j].depth === toc[i].depth) break;
+      }
+      // check all ancestors
+      let d = toc[i].depth;
+      for (let j = i - 1; j >= 0 && d > 0; j--) {
+        if (toc[j].depth < d) {
+          if (collapsed.has(j)) return true;
+          d = toc[j].depth;
+        }
+      }
+      return false;
+    };
+
+    const render = () => {
+      list.replaceChildren();
+      const hereIdx = (() => { try { return ctl.tocIndex?.(); } catch { return null; } })();
+      let hereEl = null;
+      for (let i = 0; i < toc.length; i++) {
+        if (isHidden(i)) continue;
+        const t = toc[i];
+        const depth = Math.min(t.depth || 0, 4);
+        const open = t.hasChildren && !collapsed.has(i);
+        const row = h('div', { class: 'toc-row' + (i === hereIdx ? ' here' : '') });
+        if (t.hasChildren) {
+          row.append(h('button', {
+            class: 'toc-twist' + (open ? ' open' : ''),
+            'aria-label': open ? 'Collapse' : 'Expand',
+            'aria-expanded': open,
+            onclick: (e) => { e.stopPropagation(); if (collapsed.has(i)) collapsed.delete(i); else collapsed.add(i); render(); },
+          }, open ? '▾' : '▸'));
+        } else {
+          row.append(h('span', { class: 'toc-twist spacer' }));
+        }
+        const prog = typeof ctl.chapterProgress === 'function' ? ctl.chapterProgress(i) : 0;
+        const btn = h('button', {
+          class: 'toc-item d' + depth + (t.source === 'spine' ? ' detected' : ''),
+          onclick: () => { close(); ctl.goTo(t.location); },
+        },
+          h('span', { class: 'toc-label' }, t.label),
+          prog > 0.02 ? h('span', { class: 'toc-prog', 'aria-hidden': 'true' }, Math.round(prog * 100) + '%') : null);
+        row.append(btn);
+        list.append(row);
+        if (i === hereIdx) hereEl = row;
+      }
+      if (hereEl) requestAnimationFrame(() => hereEl.scrollIntoView({ block: 'center' }));
+    };
+
+    // Auto-expand ancestors of the current chapter; collapse deep nests by default only if very large
+    try {
+      const hereIdx = ctl.tocIndex?.();
+      if (toc.length > 80) {
+        // collapse everything deeper than depth 0 initially, then expand path to current
+        for (let i = 0; i < toc.length; i++) if (toc[i].hasChildren && toc[i].depth === 0) collapsed.add(i);
+      }
+      if (hereIdx != null) {
+        let d = toc[hereIdx]?.depth ?? 0;
+        for (let j = hereIdx - 1; j >= 0 && d > 0; j--) {
+          if (toc[j].depth < d) { collapsed.delete(j); d = toc[j].depth; }
+        }
+      }
+    } catch { /* ignore */ }
+
     view.append(list);
-    try { const idx = ctl.tocIndex?.(); if (idx != null && list.children[idx]) { here = list.children[idx]; here.classList.add('here'); here.scrollIntoView({ block: 'center' }); } } catch { /* ignore */ }
+    render();
   }
   async function drawMarks(view, close) {
     marks = await db.listBookmarks(book.id);
@@ -183,8 +303,23 @@ export async function mountReader(root, book, { exit }) {
     const list = h('div', { class: 'list' });
     for (const m of marks) {
       list.append(h('div', { class: 'note-row' },
-        h('button', { class: 'note-main', onclick: () => { close(); ctl.goTo(m.location); } }, h('div', { class: 'note-title' }, m.title || 'Bookmark'), h('div', { class: 'note-sub' }, new Date(m.createdAt).toLocaleDateString())),
-        h('button', { class: 'icon-btn', 'aria-label': 'Delete bookmark', onclick: async () => { await db.deleteBookmark(m.id); marks = marks.filter((x) => x.id !== m.id); refreshMarks(); drawMarks(view.replaceChildren() || view, close); } }, icon('trash', 18))));
+        h('button', { class: 'note-main', onclick: () => { close(); ctl.goTo(m.location); } },
+          h('div', { class: 'note-title' }, m.title || 'Bookmark'),
+          h('div', { class: 'note-sub' }, new Date(m.createdAt).toLocaleDateString())),
+        h('button', { class: 'icon-btn', 'aria-label': 'Rename bookmark', onclick: async () => {
+          const n = await promptDialog({ title: 'Rename bookmark', label: 'Name', value: m.title || '', confirmLabel: 'Save' });
+          if (n == null) return;
+          m.title = (n.trim() || m.title || 'Bookmark');
+          try { await db.put('bookmarks', m); } catch {
+            await db.deleteBookmark(m.id);
+            const b = await db.addBookmark(book.id, m.location, m.title);
+            Object.assign(m, b);
+          }
+          drawMarks(view.replaceChildren() || view, close);
+        } }, icon('edit', 18)),
+        h('button', { class: 'icon-btn', 'aria-label': 'Delete bookmark', onclick: async () => {
+          await db.deleteBookmark(m.id); marks = marks.filter((x) => x.id !== m.id); refreshMarks(); drawMarks(view.replaceChildren() || view, close);
+        } }, icon('trash', 18))));
     }
     view.append(list);
   }

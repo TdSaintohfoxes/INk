@@ -69,11 +69,26 @@ function filterStyle(str) {
 
 /* ---------------- sanitise ---------------- */
 const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+
+/** Pirate / aggregator watermarks commonly injected into free EPUBs */
+const WATERMARK_RE = /^(?:\s*(?:www\.)?(?:oceanofpdf|pdfdrive|z-?lib(?:rary)?|1lib|libgen|epub\.pub|freebookspot|bookfi|bookzz|pdfbooks)(?:\.(?:com|org|net|sk|rs|is|li))?\s*)$/i;
+const WATERMARK_SOFT = /(?:oceanofpdf|pdfdrive|z-?library|libgen\.(?:is|rs)|1lib\.(?:sk|to))/i;
+
 export function sanitize(root, base, selfPath) {
   for (const el of [...root.querySelectorAll(DROP)]) el.remove();
   const tw = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
   const comments = []; while (tw.nextNode()) comments.push(tw.currentNode);
   comments.forEach((c) => c.remove());
+
+  // Remove short elements whose entire text is a known watermark
+  for (const el of [...root.querySelectorAll('p, span, a, div, h1, h2, h3, h4, center, em, strong, i, b')]) {
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 80) continue;
+    if (WATERMARK_RE.test(t) || (t.length < 40 && WATERMARK_SOFT.test(t) && !/[a-z]{4,}\s+[a-z]{4,}/i.test(t.replace(WATERMARK_SOFT, '')))) {
+      el.remove();
+    }
+  }
+
   for (const el of root.querySelectorAll('*')) {
     for (const at of [...el.attributes]) if (/^on/i.test(at.name) || at.name === 'srcset' || at.name === 'sizes') el.removeAttribute(at.name);
     if (el.hasAttribute('style')) { const st = filterStyle(el.getAttribute('style')); if (st) el.setAttribute('style', st); else el.removeAttribute('style'); }

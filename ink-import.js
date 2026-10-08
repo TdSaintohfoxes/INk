@@ -44,7 +44,7 @@ async function readEpub(file) {
     cover,
     title: pkg.title, author: pkg.authors.slice(0, 3).join(', '),
     series: pkg.series, seriesNumber: pkg.seriesIndex,
-    meta: { pages: pkg.spine.length, language: pkg.language, description: pkg.description, rtl: pkg.rtl, epubVersion: pkg.version },
+    meta: { pages: pkg.spine.length, language: pkg.language, description: pkg.description, publisher: pkg.publisher || '', pubDate: pkg.pubDate || '', rtl: pkg.rtl, epubVersion: pkg.version },
   };
 }
 

@@ -36,12 +36,26 @@
 .sheet.panel .sheet-body { padding-top: 6px; }
 .panel-tabs { margin-bottom: 14px; position: sticky; top: 0; z-index: 2; background: var(--raise); padding-bottom: 6px; }
 .toc { display: flex; flex-direction: column; }
-.toc-item { text-align: left; padding: 12px 8px; border-bottom: 1px solid var(--line); font-size: .95rem; line-height: 1.3; color: var(--text); }
-.toc-item.d1 { padding-left: 24px; color: color-mix(in srgb, var(--text) 85%, var(--muted)); font-size: .9rem; }
-.toc-item.d2 { padding-left: 40px; font-size: .86rem; color: var(--muted); }
-.toc-item.d3 { padding-left: 56px; font-size: .84rem; color: var(--muted); }
-.toc-item.here { color: var(--accent); font-weight: 600; }
-.toc-item:hover { background: var(--surface); }
+.toc-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+.toc-row.here { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.toc-row.here .toc-item { color: var(--accent); font-weight: 600; }
+.toc-twist { flex: 0 0 32px; display: grid; place-items: center; color: var(--muted); font-size: .7rem; background: transparent; border: 0; cursor: pointer; }
+.toc-twist.open { color: var(--text); }
+.toc-twist.spacer { pointer-events: none; visibility: hidden; }
+.toc-item { flex: 1; display: flex; align-items: baseline; gap: 8px; text-align: left; padding: 12px 10px 12px 0; font-size: .95rem; line-height: 1.35; color: var(--text); background: transparent; border: 0; cursor: pointer; }
+.toc-item .toc-label { flex: 1; min-width: 0; }
+.toc-item .toc-prog { flex: 0 0 auto; font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.toc-row.here .toc-prog { color: var(--accent); }
+.toc-item.d1 { padding-left: 4px; color: color-mix(in srgb, var(--text) 88%, var(--muted)); font-size: .92rem; }
+.toc-item.d2 { padding-left: 12px; font-size: .88rem; color: var(--muted); }
+.toc-item.d3, .toc-item.d4 { padding-left: 20px; font-size: .84rem; color: var(--muted); }
+.toc-item:hover, .toc-twist:hover { background: var(--surface); }
+.toc-row:hover { background: var(--surface); }
+.book-info { display: flex; flex-direction: column; gap: 0; padding-bottom: 24px; }
+.info-row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; padding: 10px 4px; border-bottom: 1px solid var(--line); font-size: .9rem; }
+.info-k { color: var(--muted); }
+.info-v { color: var(--text); word-break: break-word; }
+.info-desc { margin-top: 16px; padding: 12px; background: var(--surface); border-radius: 10px; font-size: .9rem; line-height: 1.5; color: color-mix(in srgb, var(--text) 90%, var(--muted)); }
 .note-row { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--line); }
 .note-main { flex: 1; text-align: left; padding: 12px 6px; min-width: 0; }
 .note-title { font-size: .95rem; }
@@ -71,9 +85,10 @@
 .ep-view { position: absolute; inset: 0; overflow: hidden; }
 .ep-pages { position: absolute; inset: 0; will-change: transform; display: flex; }
 .ep-slot { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; overflow: hidden; contain: layout paint; }
-.ep-body { position: absolute; top: 0; left: 0; height: 100%; padding: 0; font-size: calc(var(--ep-size) * 1px); line-height: var(--ep-lh); letter-spacing: calc(var(--ep-ls) * 1em); text-align: var(--ep-align); hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word; }
+.ep-body { position: absolute; top: 0; left: 0; height: 100%; padding: 0; font-size: calc(var(--ep-size) * 1px); line-height: var(--ep-lh); letter-spacing: calc(var(--ep-ls) * 1em); word-spacing: calc(var(--ep-ws, 0) * 1em); text-align: var(--ep-align); hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word; }
 .ep-body.cols { column-fill: auto; column-gap: calc(var(--ep-gap) * 1px); }
-.ep-body p { margin: 0 0 calc(var(--ep-para) * 1em); }
+.ep-body p { margin: 0 0 calc(var(--ep-para) * 1em); text-indent: calc(var(--ep-indent, 0) * 1em); }
+.ep-body p:first-child, .ep-body h1 + p, .ep-body h2 + p, .ep-body h3 + p, .ep-body hr + p { text-indent: 0; }
 .ep-body * { max-width: 100%; box-sizing: border-box; }
 .ep-body img, .ep-body svg, .ep-body video { max-width: 100%; max-height: calc(var(--ep-ph) * 1px); height: auto; object-fit: contain; break-inside: avoid; display: block; margin: .6em auto; }
 .ep-body figure { margin: .8em 0; break-inside: avoid; }
