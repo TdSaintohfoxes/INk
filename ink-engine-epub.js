@@ -314,7 +314,24 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const sub = progress >= 1 ? `${Math.round(progress * 100)}% · finished`
       : showTime ? `${Math.round(progress * 100)}% · ${fmtMinutes(mins)} left`
       : `${Math.round(progress * 100)}%`;
-    api.relocate({ location: { s, f: +fS.toFixed(5), a }, progress, label, sub, turned });
+
+    // "N pages left in chapter" for the floating top status
+    let chapLeft = '';
+    const chIdx = chapterIndexAt(s, Math.round(a + (e - a) * 0.2));
+    if (chIdx >= 0 && tocFlat.length) {
+      const start = tocFlat[chIdx];
+      const next = tocFlat[chIdx + 1];
+      const startByte = cum[start.s];
+      const endByte = next ? cum[next.s] : TOTAL;
+      const hereByte = cum[s] + sizes[s] * fE;
+      const leftBytes = Math.max(0, endByte - hereByte);
+      const pagesLeft = Math.max(0, Math.round((leftBytes * ratio()) / (WPM * CHARS_PER_WORD * 1.35)));
+      chapLeft = progress >= 1 ? 'Finished'
+        : pagesLeft > 0 ? `${pagesLeft} page${pagesLeft === 1 ? '' : 's'} left in chapter`
+        : (ch?.label || '');
+    }
+    const pageLabel = pageText || `${Math.round(progress * 100)}%`;
+    api.relocate({ location: { s, f: +fS.toFixed(5), a }, progress, label, sub, turned, chapLeft, pageLabel });
   }
 
   /** Approximate progress (0–1) for a TOC entry relative to the next entry / end of book */
@@ -478,6 +495,14 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   const secBodies = new Map();
   let scrollBusy = false;
 
+  function chapterLabelForSection(s) {
+    // Prefer a TOC entry that starts at this spine index
+    const hit = tocFlat.find((t) => t.s === s && (!t.id || t.depth === 0));
+    if (hit?.label) return hit.label;
+    const any = tocFlat.find((t) => t.s === s);
+    return any?.label || '';
+  }
+
   async function mountSection(s, where) {
     if (secBodies.has(s)) return secBodies.get(s);
     const sec = await getSec(s);
@@ -486,6 +511,13 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const body = h('div', { class: 'ep-body sec' + (sec.parts.length === 1 ? ' single' : ''), 'data-s': s, lang: sec.lang || pkg.language || null, dir: rtlBook ? 'rtl' : null });
     body.style.width = geo.W + 'px';
     if (sec.css) body.append(h('style', null, sec.css));
+    // Visual chapter break before every section after the first — clean Apple Books–style separation
+    if (s > 0) {
+      const label = chapterLabelForSection(s);
+      const br = h('div', { class: 'ep-chap-break', 'aria-hidden': label ? 'false' : 'true' },
+        label ? h('div', { class: 'ep-chap-title' }, label) : null);
+      body.append(br);
+    }
     sec.parts.forEach((p) => body.append(p.el));
     sec.parts.forEach((p) => renderMarks(sec, p));
     if (where === 'start') { const h0 = scroller.scrollHeight; flowEl.prepend(body); scroller.scrollTop += scroller.scrollHeight - h0; }
@@ -590,8 +622,13 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       view.style.touchAction = 'auto';
       scroller = h('div', { class: 'ep-scroll' });
       scroller.style.overflowAnchor = 'none';
-      scroller.style.paddingTop = Math.max(0, geo.top - 8) + 'px'; scroller.style.paddingBottom = (geo.sb + 64) + 'px';
-      flowEl = h('div', { class: 'ep-flow' }); scroller.append(flowEl);
+      // Keep text clear of the HUD labels and home indicator
+      scroller.style.paddingTop = Math.max(28, geo.top) + 'px';
+      scroller.style.paddingBottom = Math.max(48, geo.sb + 56) + 'px';
+      flowEl = h('div', { class: 'ep-flow' });
+      flowEl.style.margin = '0 auto';
+      flowEl.style.maxWidth = geo.W + 'px';
+      scroller.append(flowEl);
       view.append(scroller);
       scroller.addEventListener('scroll', onScroll, { passive: true });
       await scrollShow(pos, find);
@@ -654,11 +691,13 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   }
 
   view.addEventListener('pointerdown', (e) => {
+    if (topSheet()) return; // settings / TOC / dialog open — never steal gestures
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), drag: false, moved: false, lx: e.clientX, lt: performance.now(), vx: 0, type: e.pointerType, target: e.target, sel: hasSelection() };
   });
   view.addEventListener('pointermove', (e) => {
     if (!ptr || e.pointerId !== ptr.id) return;
+    if (topSheet()) { ptr = null; return; }
     const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
     if (!ptr.drag) {
       if (Math.abs(dx) > 10 || Math.abs(dy) > 10) ptr.moved = true;
@@ -828,11 +867,9 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   });
   ro.observe(root);
 
-  /* ---------- settings panel (uses per-book overrides) ---------- */
+  /* ---------- settings panel — compact, visual, Apple Books–inspired ---------- */
   function buildSettingsPanel() {
     const fonts = [['serif', 'Serif'], ['sans', 'Sans'], ['humanist', 'Humanist'], ['mono', 'Mono']];
-    const S = (k, v) => { setBookPref(k, v); applyVars(); if (RELAYOUT_KEYS.has('reading.' + k) || k === 'flow') relayout(); };
-    // also write to global so new books inherit last choices
     const Sg = (k, v) => { settings.set('reading.' + k, v); setBookPref(k, v); };
     const fontGrid = h('div', { class: 'font-grid' }, fonts.map(([k, label]) => h('button', {
       class: 'font-btn' + (R().font === k ? ' on' : ''), style: { fontFamily: settings.FONT_STACKS[k] },
@@ -848,9 +885,10 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     };
     const custom = h('div', { style: { display: R().theme === 'custom' ? 'grid' : 'none', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' } },
       picker('Background', 'customBg'), picker('Text', 'customFg'));
-    const wrap = h('div');
+    const wrap = h('div', { class: 'rd-set-body' });
+    const sizeSl = slider({ label: 'Text size', min: 12, max: 38, step: 1, value: R().size, format: (v) => v + ' px', onInput: (v) => Sg('size', v) });
     const sliders = {
-      size: slider({ label: 'Text size', min: 12, max: 38, step: 1, value: R().size, format: (v) => v + ' px', onInput: (v) => Sg('size', v) }),
+      size: sizeSl,
       lineHeight: slider({ label: 'Line spacing', min: 1.2, max: 2.3, step: 0.05, value: R().lineHeight, format: (v) => v.toFixed(2), onInput: (v) => Sg('lineHeight', +v.toFixed(2)) }),
       letterSpacing: slider({ label: 'Letter spacing', min: 0, max: 0.14, step: 0.01, value: R().letterSpacing, format: (v) => v.toFixed(2) + ' em', onInput: (v) => Sg('letterSpacing', +v.toFixed(2)) }),
       wordSpacing: slider({ label: 'Word spacing', min: 0, max: 0.4, step: 0.02, value: R().wordSpacing || 0, format: (v) => v.toFixed(2) + ' em', onInput: (v) => Sg('wordSpacing', +v.toFixed(2)) }),
@@ -863,15 +901,18 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const flowSeg = segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], R().flow, (v) => Sg('flow', v));
     const themeSw = swatches(themeItems, R().theme, (v) => { Sg('theme', v); custom.style.display = v === 'custom' ? 'grid' : 'none'; applyVars(); });
     wrap.append(
-      group('Page', field('Reading style', flowSeg), field('Theme', themeSw), custom,
+      // Primary controls first — what people change most
+      group('Theme', themeSw, custom),
+      group('Text', field('Font', fontGrid), sliders.size, field('Alignment', alignSeg)),
+      group('Page', field('Reading style', flowSeg), sliders.margin, sliders.lineHeight),
+      group('More',
+        sliders.paraSpacing, sliders.letterSpacing, sliders.wordSpacing, sliders.firstLineIndent, sliders.columnWidth,
+        toggleRow({ label: 'Dyslexia-friendly font', value: settings.get('app.dyslexia'), onChange: (v) => { settings.set('app.dyslexia', v); applyVars(); relayout(); } }),
         toggleRow({ label: 'Stop at chapter end', value: !!R().chapterStop, onChange: (v) => Sg('chapterStop', v) }),
         toggleRow({ label: 'Tap sides to turn page', value: R().tapNav !== false, onChange: (v) => Sg('tapNav', v) }),
         toggleRow({ label: 'Auto-hide controls', value: R().autoHide !== false, onChange: (v) => { Sg('autoHide', v); settings.set('reading.autoHide', v); } }),
         toggleRow({ label: 'Show time remaining', value: R().showTimeLeft !== false, onChange: (v) => { Sg('showTimeLeft', v); report(false); } })),
-      group('Text', field('Font', fontGrid), sliders.size, sliders.lineHeight, sliders.paraSpacing, sliders.letterSpacing, sliders.wordSpacing, sliders.firstLineIndent, field('Alignment', alignSeg),
-        toggleRow({ label: 'Dyslexia-friendly font', value: settings.get('app.dyslexia'), onChange: (v) => { settings.set('app.dyslexia', v); applyVars(); relayout(); } })),
-      group('Layout', sliders.margin, sliders.columnWidth),
-      h('button', { class: 'btn ghost', style: { marginTop: '18px' }, onclick: async () => {
+      h('button', { class: 'btn ghost', style: { marginTop: '14px' }, onclick: async () => {
         const d = settings.DEFAULTS.reading;
         for (const k of settings.BOOK_PREF_KEYS) { settings.set('reading.' + k, d[k]); }
         bookPrefs = null; book.readingPrefs = null;

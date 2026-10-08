@@ -34,28 +34,57 @@ export async function mountReader(root, book, { exit }) {
   let ctl = null, destroyed = false, chromeOn = true, hideT = 0, lastInfo = null, lastLoc = null;
   const unsubs = [];
 
-  /* ---------- DOM ---------- */
+  /* ---------- DOM — minimal floating chrome (Apple Books–inspired, INK identity) ---------- */
   const stage = h('div', { class: 'rd-stage', tabindex: '-1' });
-  const titleEl = h('div', { class: 'rd-title' }, h('span', null, book.title));
-  const btn = (name, label, onclick, extra = '') => h('button', { class: 'icon-btn rd-btn ' + extra, 'aria-label': label, title: label, onclick }, icon(name, 22));
-  const bmBtn = btn('bookmark', 'Bookmark this page', () => toggleBookmark(), 'rd-bm');
-  const searchBtn = btn('search', 'Search in book', () => openSearch());
-  const tocBtn = btn('toc', 'Contents', () => openContents());
-  const setBtn = btn('type', 'Reading settings', () => openSettings());
-  const backBtn = btn('back', 'Back to library', () => exit());
-  const top = h('header', { class: 'rd-top' }, backBtn, titleEl, h('div', { class: 'rd-actions' }, searchBtn, bmBtn, tocBtn, setBtn));
+  const fab = (name, label, onclick, extra = '') =>
+    h('button', { class: 'rd-fab ' + extra, 'aria-label': label, title: label, onclick: (e) => { e.stopPropagation(); onclick(); } }, icon(name, 20));
 
+  const closeBtn = fab('close', 'Close book', () => exit(), 'rd-fab-close');
+  const bmBtn = fab('bookmark', 'Bookmark this page', () => toggleBookmark(), 'rd-fab-bm');
+  const moreBtn = fab('more', 'Menu', () => openMore(), 'rd-fab-more');
+
+  // Top strip: floating close | chapter status | bookmark + more
+  const chapStatus = h('div', { class: 'rd-chap-status' });
+  const top = h('header', { class: 'rd-top' },
+    closeBtn,
+    chapStatus,
+    h('div', { class: 'rd-fab-group' }, bmBtn, moreBtn));
+
+  // Bottom strip: chapter label, progress, seek
   const labelEl = h('span', { class: 'rd-label' });
   const subEl = h('span', { class: 'rd-sub' });
+  const pageEl = h('div', { class: 'rd-page-num' }); // always subtle when chrome off
   const range = h('input', { type: 'range', class: 'rd-range', min: 0, max: 1000, step: 1, value: 0, 'aria-label': 'Position in book' });
-  const prevCh = h('button', { class: 'icon-btn rd-btn small', 'aria-label': 'Previous chapter', onclick: () => { api.interaction(); ctl?.prevChapter?.(); } }, icon('chevL', 20));
-  const nextCh = h('button', { class: 'icon-btn rd-btn small', 'aria-label': 'Next chapter', onclick: () => { api.interaction(); ctl?.nextChapter?.(); } }, icon('chevR', 20));
+  const prevCh = h('button', { class: 'rd-ch-btn', 'aria-label': 'Previous chapter', onclick: () => { api.interaction(); ctl?.prevChapter?.(); } }, icon('chevL', 18));
+  const nextCh = h('button', { class: 'rd-ch-btn', 'aria-label': 'Next chapter', onclick: () => { api.interaction(); ctl?.nextChapter?.(); } }, icon('chevR', 18));
   const bottom = h('footer', { class: 'rd-bottom' },
     h('div', { class: 'rd-info' }, labelEl, subEl),
     h('div', { class: 'rd-seek' }, prevCh, range, nextCh));
+
   const loading = h('div', { class: 'rd-loading', role: 'status' }, h('div', { class: 'rd-spin' }), h('div', { class: 'rd-load-t' }, 'Opening…'));
-  const rd = h('div', { class: 'rd chrome-on', 'data-format': book.format }, stage, top, bottom, loading);
+  const rd = h('div', { class: 'rd chrome-on', 'data-format': book.format }, stage, top, bottom, pageEl, loading);
   root.replaceChildren(rd);
+
+  function openMore() {
+    api.interaction();
+    const items = [
+      { label: 'Contents', icon: 'toc', hint: book.format === 'comic' ? 'Pages & chapters' : 'Chapters & sections', onClick: () => openContents() },
+      ctl?.search ? { label: 'Search', icon: 'search', hint: 'Find text in this book', onClick: () => openSearch() } : null,
+      { label: 'Themes & settings', icon: 'type', hint: 'Font, theme, layout', onClick: () => openSettings() },
+      { label: 'Bookmarks & highlights', icon: 'bookmark', hint: 'Your marks', onClick: () => openContents('marks') },
+      book.format === 'epub' ? { label: 'Book info', icon: 'info', hint: 'Title, author, publisher', onClick: () => openContents('info') } : null,
+    ].filter(Boolean);
+    openSheet({
+      title: book.title,
+      size: 's',
+      className: 'rd-more-sheet',
+      body: () => h('div', { class: 'action-list' }, items.map((it) =>
+        h('button', { class: 'action', onclick: () => { closeAllSheets(); setTimeout(it.onClick, 40); } },
+          icon(it.icon, 20),
+          h('span', { class: 'action-label' }, it.label),
+          it.hint ? h('span', { class: 'action-hint' }, it.hint) : null))),
+    });
+  }
 
   /* ---------- chrome visibility ---------- */
   const setChrome = (on) => {
@@ -87,6 +116,10 @@ export async function mountReader(root, book, { exit }) {
       lastLoc = info.location;
       labelEl.textContent = info.label || '';
       subEl.textContent = info.sub || '';
+      // Top chapter status (e.g. "9 pages left in chapter") + bottom page number
+      const pctVal = Math.round(clamp(info.progress || 0, 0, 1) * 100);
+      chapStatus.textContent = info.chapLeft || info.label || '';
+      pageEl.textContent = info.pageLabel || (pctVal + '%');
       if (!dragging) range.value = Math.round(clamp(info.progress || 0, 0, 1) * 1000);
       range.setAttribute('aria-valuetext', info.label || '');
       refreshMarks();
@@ -128,7 +161,8 @@ export async function mountReader(root, book, { exit }) {
   function refreshMarks() {
     const on = !!currentMark();
     bmBtn.classList.toggle('on', on);
-    bmBtn.replaceChildren(icon(on ? 'bookmarkOn' : 'bookmark', 22));
+    bmBtn.replaceChildren(icon(on ? 'bookmarkOn' : 'bookmark', 20));
+    bmBtn.classList.toggle('on', on);
     bmBtn.setAttribute('aria-pressed', on);
     bmBtn.setAttribute('aria-label', on ? 'Remove bookmark' : 'Bookmark this page');
   }
@@ -438,12 +472,9 @@ export async function mountReader(root, book, { exit }) {
       ctl = await mod.open({ book, blob, host: stage, api, saved: goto?.location ?? book.currentLocation, gotoQuery: goto?.q });
       if (destroyed) { ctl?.destroy?.(); return () => {}; }
       loading.classList.remove('on');
-      searchBtn.hidden = !ctl.search;
-      tocBtn.querySelector('svg')?.setAttribute('aria-hidden', 'true');
       stats.begin(book.id);
       lib.touchOpened(book.id);
       await loadMarks();
-      Promise.resolve(ctl.toc).then((t) => { if (t && !t.length && !ctl.thumbs && !ctl.highlights) tocBtn.hidden = false; }).catch(() => {});
       schedule();
     } catch (e) {
       if (e?.cancelled) { exit(); return () => {}; }
