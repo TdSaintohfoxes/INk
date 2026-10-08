@@ -73,7 +73,9 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const m = R().margin;
     const W = Math.max(180, Math.min(VW - 2 * m, R().columnWidth));
     const left = Math.round((VW - W) / 2);
-    const top = Math.round(st + 38), bottom = Math.round(sb + 40);
+    // Reserve space so text never sits under floating chrome (FABs ~52px, seek ~64px)
+    const chromePadT = 56, chromePadB = 72;
+    const top = Math.round(st + chromePadT), bottom = Math.round(sb + chromePadB);
     const H = Math.max(160, VH - top - bottom);
     const G = left + 24;
     geo = { VW, VH, W, H, left, top, G, step: W + G, st, sb };
@@ -268,7 +270,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     return colOf(u, r);
   }
   function setPageTransform(u, k, animate, dx = 0) {
-    u.body.style.transition = animate && motionOK() ? 'transform .22s cubic-bezier(.2,.8,.2,1)' : 'none';
+    u.body.style.transition = animate && motionOK() ? 'transform .28s cubic-bezier(.22,.82,.18,1)' : 'none';
     u.body.style.transform = `translate3d(${-nx * k * geo.step + dx}px,0,0)`;
   }
   async function waitImages(el, ms = 700) {
@@ -307,9 +309,9 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const ch = chapterAt(s, Math.round(a + (e - a) * 0.2));
     const mins = (TOTAL * ratio() * (1 - progress)) / (WPM * CHARS_PER_WORD);
     const label = ch?.label || book.title;
-    hudChapter.textContent = ch?.label || '';
-    hudPage.textContent = pageText;
-    hudPct.textContent = Math.round(progress * 100) + '%';
+    // Engine HUD disabled — reader chrome owns progress display (avoids double labels)
+    hudT.style.display = 'none';
+    hudB.style.display = 'none';
     const showTime = R().showTimeLeft !== false;
     const sub = progress >= 1 ? `${Math.round(progress * 100)}% · finished`
       : showTime ? `${Math.round(progress * 100)}% · ${fmtMinutes(mins)} left`
@@ -474,11 +476,18 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     busy = true;
     target.page = dir > 0 ? 0 : target.pages - 1;
     setPageTransform(target, target.page, false);
-    const dur = motionOK() ? 240 : 0;
-    pagesEl.style.transition = dur ? `transform ${dur}ms cubic-bezier(.2,.8,.2,1)` : 'none';
+    // Premium page-turn: springy slide with subtle depth on the leaving page
+    const dur = motionOK() ? 320 : 0;
+    if (units.cur?.slot) {
+      units.cur.slot.style.transition = dur ? `box-shadow ${dur}ms ease, transform ${dur}ms cubic-bezier(.22,.8,.2,1)` : 'none';
+      units.cur.slot.style.boxShadow = dir > 0
+        ? '-12px 0 28px rgba(0,0,0,.22)' : '12px 0 28px rgba(0,0,0,.22)';
+    }
+    pagesEl.style.transition = dur ? `transform ${dur}ms cubic-bezier(.22,.82,.18,1)` : 'none';
     pagesEl.style.transform = `translate3d(${-dir * nx * geo.VW}px,0,0)`;
     await waitEnd(pagesEl, dur);
     if (destroyed) return false;
+    if (units.cur?.slot) { units.cur.slot.style.boxShadow = ''; units.cur.slot.style.transition = ''; }
     pagesEl.style.transition = 'none'; pagesEl.style.transform = 'none';
     if (dir > 0) { disposeUnit(units.prev); units = { prev: units.cur, cur: target, next: null }; }
     else { disposeUnit(units.next); units = { next: units.cur, cur: target, prev: null }; }

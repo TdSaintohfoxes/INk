@@ -1,5 +1,5 @@
 /* INK service worker — offline app shell, share target */
-const CACHE = 'ink-v6';
+const CACHE = 'ink-v7';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png',
   './icon-maskable-192.png', './icon-maskable-512.png',
   './ink.css', './ink-reader.css',

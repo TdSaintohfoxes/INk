@@ -70,6 +70,9 @@ export function openSheet({ title, body, className = '', size = 'm', onClose, no
   stack.push(api);
   const content = typeof body === 'function' ? body(api) : body;
   if (content) bodyEl.append(content);
+  // Always open at the top of the sheet (settings was landing mid-list)
+  bodyEl.scrollTop = 0;
+  requestAnimationFrame(() => { bodyEl.scrollTop = 0; });
   const f2 = sheet.querySelector('input,textarea,button:not(.icon-btn),[tabindex]');
   if (f2 && !(f2 instanceof HTMLButtonElement)) setTimeout(() => f2.focus?.({ preventScroll: true }), 70);
   return api;

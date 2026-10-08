@@ -432,7 +432,17 @@ export async function mountReader(root, book, { exit }) {
   function openSettings() {
     if (!ctl?.settingsPanel) return;
     api.interaction();
-    openSheet({ title: book.format === 'epub' ? 'Reading settings' : book.format === 'pdf' ? 'PDF settings' : 'Comic settings', size: 'l', className: 'panel rd-settings', body: (s) => ctl.settingsPanel(api, s) });
+    const sheet = openSheet({
+      title: book.format === 'epub' ? 'Reading settings' : book.format === 'pdf' ? 'PDF settings' : 'Comic settings',
+      size: 'l',
+      className: 'panel rd-settings',
+      body: (s) => ctl.settingsPanel(api, s),
+    });
+    // Always start at the top so Theme / Font are the first controls seen
+    requestAnimationFrame(() => {
+      const body = sheet?.body || sheet?.el?.querySelector?.('.sheet-body');
+      if (body) body.scrollTop = 0;
+    });
   }
 
   /* ---------- keyboard ---------- */
