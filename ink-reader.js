@@ -91,7 +91,8 @@ export async function mountReader(root, book, { exit }) {
     if (chromeOn === on) return;
     chromeOn = on;
     rd.classList.toggle('chrome-on', on);
-    ctl?.onChrome?.(on);
+    // Notify engine so content insets adapt (text never under FABs / seek when chrome is up)
+    try { ctl?.onChrome?.(on); } catch { /* engine may not be ready */ }
     schedule();
   };
   const schedule = () => {
@@ -300,12 +301,17 @@ export async function mountReader(root, book, { exit }) {
           row.append(h('span', { class: 'toc-twist spacer' }));
         }
         const prog = typeof ctl.chapterProgress === 'function' ? ctl.chapterProgress(i) : 0;
+        const isHere = i === hereIdx;
+        let progLabel = null;
+        if (isHere) progLabel = h('span', { class: 'toc-prog toc-now' }, 'Now');
+        else if (prog >= 0.98) progLabel = h('span', { class: 'toc-prog toc-done' }, '✓');
+        else if (prog > 0.02) progLabel = h('span', { class: 'toc-prog' }, Math.round(prog * 100) + '%');
         const btn = h('button', {
-          class: 'toc-item d' + depth + (t.source === 'spine' ? ' detected' : ''),
+          class: 'toc-item d' + depth + (t.source === 'spine' ? ' detected' : '') + (isHere ? ' current' : ''),
           onclick: () => { close(); ctl.goTo(t.location); },
         },
           h('span', { class: 'toc-label' }, t.label),
-          prog > 0.02 ? h('span', { class: 'toc-prog', 'aria-hidden': 'true' }, Math.round(prog * 100) + '%') : null);
+          progLabel);
         row.append(btn);
         list.append(row);
         if (i === hereIdx) hereEl = row;
@@ -339,14 +345,20 @@ export async function mountReader(root, book, { exit }) {
       list.append(h('div', { class: 'note-row' },
         h('button', { class: 'note-main', onclick: () => { close(); ctl.goTo(m.location); } },
           h('div', { class: 'note-title' }, m.title || 'Bookmark'),
+          m.note ? h('div', { class: 'note-text' }, m.note) : null,
           h('div', { class: 'note-sub' }, new Date(m.createdAt).toLocaleDateString())),
-        h('button', { class: 'icon-btn', 'aria-label': 'Rename bookmark', onclick: async () => {
-          const n = await promptDialog({ title: 'Rename bookmark', label: 'Name', value: m.title || '', confirmLabel: 'Save' });
+        h('button', { class: 'icon-btn', 'aria-label': 'Edit bookmark', onclick: async () => {
+          const n = await promptDialog({ title: 'Edit bookmark', label: 'Name', value: m.title || '', confirmLabel: 'Next' });
           if (n == null) return;
           m.title = (n.trim() || m.title || 'Bookmark');
-          try { await db.put('bookmarks', m); } catch {
+          const note = await promptDialog({ title: 'Note (optional)', label: 'Note', value: m.note || '', confirmLabel: 'Save' });
+          if (note != null) m.note = note.trim();
+          try {
+            if (typeof db.saveBookmark === 'function') await db.saveBookmark(m);
+            else await db.put('bookmarks', m);
+          } catch {
             await db.deleteBookmark(m.id);
-            const b = await db.addBookmark(book.id, m.location, m.title);
+            const b = await db.addBookmark(book.id, m.location, m.title, m.note);
             Object.assign(m, b);
           }
           drawMarks(view.replaceChildren() || view, close);
@@ -367,6 +379,14 @@ export async function mountReader(root, book, { exit }) {
           h('div', { class: 'note-quote', style: { '--hl': hlColor(x.color) } }, x.text),
           x.note ? h('div', { class: 'note-text' }, x.note) : null,
           h('div', { class: 'note-sub' }, [x.label, new Date(x.createdAt).toLocaleDateString()].filter(Boolean).join(' · '))),
+        h('button', { class: 'icon-btn', 'aria-label': 'Edit note', onclick: async () => {
+          const n = await promptDialog({ title: x.note ? 'Edit note' : 'Add a note', label: 'Note', value: x.note || '', confirmLabel: 'Save' });
+          if (n == null) return;
+          x.note = n.trim();
+          await db.saveHighlight(x);
+          ctl.highlightsChanged?.();
+          drawHighlights(view.replaceChildren() || view, close);
+        } }, icon('edit', 18)),
         h('button', { class: 'icon-btn', 'aria-label': 'Delete highlight', onclick: async () => { await db.deleteHighlight(x.id); ctl.highlightsChanged?.(); drawHighlights(view.replaceChildren() || view, close); } }, icon('trash', 18))));
     }
     view.append(list);

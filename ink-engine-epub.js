@@ -66,6 +66,9 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
 
   /* ---------- geometry ---------- */
   let geo = { VW: 0, VH: 0, W: 0, H: 0, left: 0, top: 0, G: 0, step: 1, st: 0, sb: 0 };
+  // When chrome is visible, reserve more vertical space so text never sits under FABs / seek bar.
+  // When chrome is hidden, use a tighter inset for immersion (still clears safe-area).
+  let chromeOpen = true;
   function measureGeo() {
     const VW = root.clientWidth || host.clientWidth || innerWidth, VH = root.clientHeight || host.clientHeight || innerHeight;
     const cs = getComputedStyle(probeEl);
@@ -73,8 +76,8 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const m = R().margin;
     const W = Math.max(180, Math.min(VW - 2 * m, R().columnWidth));
     const left = Math.round((VW - W) / 2);
-    // Reserve space so text never sits under floating chrome (FABs ~52px, seek ~64px)
-    const chromePadT = 56, chromePadB = 72;
+    const chromePadT = chromeOpen ? 58 : 28;
+    const chromePadB = chromeOpen ? 76 : 40;
     const top = Math.round(st + chromePadT), bottom = Math.round(sb + chromePadB);
     const H = Math.max(160, VH - top - bottom);
     const G = left + 24;
@@ -197,6 +200,22 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   let lastPos = null;                                  // { s, a, e } visible character range
   const slotOffset = (role) => (role === 'cur' ? 0 : role === 'next' ? nx * geo.VW : -nx * geo.VW);
 
+  /** Chapter title shown only on the first page of a chapter (paged mode). */
+  function chapterHeadLabel(s, partIndex) {
+    if (partIndex !== 0) return '';
+    // Prefer a top-level TOC entry that starts at this spine item
+    const top = tocFlat.find((t) => t.s === s && t.depth === 0 && !t.id);
+    if (top?.label) return top.label;
+    const anyTop = tocFlat.find((t) => t.s === s && t.depth === 0);
+    if (anyTop?.label && !anyTop.id) return anyTop.label;
+    // Fragment-less entry at this section
+    const plain = tocFlat.find((t) => t.s === s && !t.id);
+    if (plain?.label) return plain.label;
+    // First TOC entry that lands on this section
+    const first = tocFlat.find((t) => t.s === s);
+    return first?.label || '';
+  }
+
   async function makeUnit(s, p) {
     const sec = await getSec(s);
     p = clamp(p, 0, sec.parts.length - 1);
@@ -204,9 +223,16 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const slot = h('div', { class: 'ep-slot' });
     const body = h('div', { class: 'ep-body cols', 'data-s': s, lang: sec.lang || pkg.language || null, dir: rtlBook ? 'rtl' : null });
     if (sec.css) slot.append(h('style', null, sec.css));
+    // Chapter title lives outside the measured character stream (sibling of part.el)
+    // so offsets / highlights stay stable. It only appears on the first page of the unit.
+    const headLabel = chapterHeadLabel(s, p);
+    if (headLabel) {
+      body.append(h('div', { class: 'ep-chap-head', 'aria-label': 'Chapter' },
+        h('div', { class: 'ep-chap-title' }, headLabel)));
+    }
     body.append(part.el);
     slot.append(body);
-    const u = { s, p, sec, part, slot, body, pages: 1, page: 0, role: '' };
+    const u = { s, p, sec, part, slot, body, pages: 1, page: 0, role: '', headLabel };
     slot.addEventListener('load', () => scheduleRemeasure(u), true);
     return u;
   }
@@ -314,7 +340,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     hudB.style.display = 'none';
     const showTime = R().showTimeLeft !== false;
     const sub = progress >= 1 ? `${Math.round(progress * 100)}% · finished`
-      : showTime ? `${Math.round(progress * 100)}% · ${fmtMinutes(mins)} left`
+      : showTime ? `${Math.round(progress * 100)}% · ~${fmtMinutes(mins)} left`
       : `${Math.round(progress * 100)}%`;
 
     // "N pages left in chapter" for the floating top status
@@ -336,16 +362,26 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     api.relocate({ location: { s, f: +fS.toFixed(5), a }, progress, label, sub, turned, chapLeft, pageLabel });
   }
 
-  /** Approximate progress (0–1) for a TOC entry relative to the next entry / end of book */
+  /** Progress (0–1) for a TOC entry relative to the next entry / end of book.
+   *  Uses character anchors when the section is loaded; falls back to spine byte sizes. */
   function chapterProgress(idx) {
     if (!tocFlat.length || idx < 0 || idx >= tocFlat.length) return 0;
     const e = tocFlat[idx];
-    const startByte = cum[e.s] + sizes[e.s] * 0; // chapter start ≈ section start (anchors resolved lazily)
     const next = tocFlat[idx + 1];
-    const endByte = next ? cum[next.s] : TOTAL;
+    const secE = loadedSecs.get(e.s);
+    const startFrac = secE?.total ? anchorChar(e) / Math.max(1, secE.total) : 0;
+    const startByte = cum[e.s] + sizes[e.s] * startFrac;
+    let endByte = TOTAL;
+    if (next) {
+      const secN = loadedSecs.get(next.s);
+      const endFrac = secN?.total ? anchorChar(next) / Math.max(1, secN.total) : 0;
+      endByte = cum[next.s] + sizes[next.s] * endFrac;
+    }
     const span = Math.max(1, endByte - startByte);
     if (!lastPos) return 0;
-    const here = cum[lastPos.s] + sizes[lastPos.s] * (loadedSecs.get(lastPos.s)?.total ? lastPos.a / loadedSecs.get(lastPos.s).total : 0);
+    const secHere = loadedSecs.get(lastPos.s);
+    const hereFrac = secHere?.total ? lastPos.a / Math.max(1, secHere.total) : 0;
+    const here = cum[lastPos.s] + sizes[lastPos.s] * hereFrac;
     if (here < startByte) return 0;
     if (here >= endByte) return 1;
     return clamp((here - startByte) / span, 0, 1);
@@ -458,12 +494,12 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     let target = dir > 0 ? units.next : units.prev;
     if (!target && nbPromise) { await nbPromise; target = dir > 0 ? units.next : units.prev; }
     if (!target) { snapBack(); if (dir > 0) toast('You’ve reached the end'); return false; }
-    // Optional: stop at chapter boundary and offer Continue
-    if (dir > 0 && R().chapterStop && lastPos) {
+    // Chapter boundary: optional hard stop, otherwise land cleanly on page 0 of the new unit
+    if (dir > 0 && lastPos) {
       const curCh = chapterIndexAt(lastPos.s, lastPos.a);
       const nextA = target.part?.base ?? 0;
       const nextCh = chapterIndexAt(target.s, nextA);
-      if (nextCh > curCh && curCh >= 0) {
+      if (nextCh > curCh && curCh >= 0 && R().chapterStop) {
         snapBack();
         const nxt = tocFlat[nextCh];
         const label = nxt?.label || 'next chapter';
@@ -474,7 +510,8 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       }
     }
     busy = true;
-    target.page = dir > 0 ? 0 : target.pages - 1;
+    // Forward always starts at page 0 of the next unit (chapter head visible); back ends on last page
+    target.page = dir > 0 ? 0 : Math.max(0, target.pages - 1);
     setPageTransform(target, target.page, false);
     // Premium page-turn: springy slide with subtle depth on the leaving page
     const dur = motionOK() ? 320 : 0;
@@ -659,9 +696,12 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   }
   const relayout = debounce(async () => {
     if (destroyed) return;
+    // Capture position BEFORE re-applying vars so typography changes never jump the reader
     const pos = lastPos ? { s: lastPos.s, a: lastPos.a } : { s: 0, a: 0 };
     applyVars();
+    measureGeo();
     await build(pos);
+    if (!destroyed) report(false);
   }, 180);
 
   /* ============================================================ INPUT ============================================================ */
@@ -699,18 +739,31 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     else { pagesEl.style.transition = 'none'; turn(dir); }
   }
 
+  const isChromeTarget = (t) => {
+    const el = t?.nodeType === 1 ? t : t?.parentElement;
+    return !!(el?.closest?.('.rd-top, .rd-bottom, .rd-fab, .rd-range, .rd-ch-btn, .rd-seek, .rd-page-num, .sheet-layer, .ep-pop, .ep-back, .sel-bar'));
+  };
+
   view.addEventListener('pointerdown', (e) => {
     if (topSheet()) return; // settings / TOC / dialog open — never steal gestures
+    if (busy) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), drag: false, moved: false, lx: e.clientX, lt: performance.now(), vx: 0, type: e.pointerType, target: e.target, sel: hasSelection() };
+    if (isChromeTarget(e.target)) return; // let chrome buttons / seek handle their own events
+    ptr = {
+      id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(),
+      drag: false, moved: false, lx: e.clientX, lt: performance.now(), vx: 0,
+      type: e.pointerType, target: e.target, sel: hasSelection(),
+    };
   });
   view.addEventListener('pointermove', (e) => {
     if (!ptr || e.pointerId !== ptr.id) return;
-    if (topSheet()) { ptr = null; return; }
+    if (topSheet() || busy) { if (ptr.drag) snapBack(); ptr = null; return; }
     const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
     if (!ptr.drag) {
       if (Math.abs(dx) > 10 || Math.abs(dy) > 10) ptr.moved = true;
-      if (flowMode() === 'paged' && ptr.type !== 'mouse' && !busy && !ptr.sel && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.25 && !hasSelection()) {
+      // Stronger horizontal bias so vertical scroll / accidental diagonal never turns pages
+      const horizontalEnough = Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.8;
+      if (flowMode() === 'paged' && ptr.type !== 'mouse' && !busy && !ptr.sel && horizontalEnough && !hasSelection()) {
         ptr.drag = true;
         try { view.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         getSelection()?.removeAllRanges();
@@ -726,9 +779,13 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   const endPtr = (e, cancelled) => {
     if (!ptr || e.pointerId !== ptr.id) return;
     const p = ptr; ptr = null;
-    if (p.drag) { try { view.releasePointerCapture(e.pointerId); } catch { /* ignore */ } cancelled ? snapBack() : dragEnd(e.clientX - p.x, p.vx); return; }
+    if (p.drag) {
+      try { view.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      cancelled ? snapBack() : dragEnd(e.clientX - p.x, p.vx);
+      return;
+    }
     if (cancelled || p.moved) return;
-    if (performance.now() - p.t > 520) return;                  // long press = text selection
+    if (performance.now() - p.t > 520) return; // long press = text selection
     tap(e, p);
   };
   view.addEventListener('pointerup', (e) => endPtr(e, false));
@@ -736,7 +793,9 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
 
   function tap(e, p) {
     if (p.sel || hasSelection()) { getSelection()?.removeAllRanges(); return; }
+    if (busy || topSheet()) return;
     const el = e.target?.nodeType === 1 ? e.target : e.target?.parentElement;
+    if (isChromeTarget(e.target)) return;
     const a = el?.closest?.('a[data-href], a[data-ext]');
     if (a) { handleLink(a); return; }
     const mk = el?.closest?.('mark.hl');
@@ -744,6 +803,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     if (popEl) { closePop(); return; }
     const x = e.clientX - root.getBoundingClientRect().left;
     const R_ = R();
+    // Tap zones: outer 28% turn page; center only toggles chrome (never turns)
     if (flowMode() === 'paged' && R_.tapNav) {
       if (x < geo.VW * 0.28) { turn(nx > 0 ? -1 : 1); return; }
       if (x > geo.VW * 0.72) { turn(nx > 0 ? 1 : -1); return; }
@@ -909,18 +969,22 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const alignSeg = segmented([{ value: 'left', label: 'Left' }, { value: 'justify', label: 'Justified' }], R().align, (v) => Sg('align', v));
     const flowSeg = segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], R().flow, (v) => Sg('flow', v));
     const themeSw = swatches(themeItems, R().theme, (v) => { Sg('theme', v); custom.style.display = v === 'custom' ? 'grid' : 'none'; applyVars(); });
-    wrap.append(
-      // Primary controls first — what people change most
-      group('Theme', themeSw, custom),
-      group('Text', field('Font', fontGrid), sliders.size, field('Alignment', alignSeg)),
-      group('Page', field('Reading style', flowSeg), sliders.margin, sliders.lineHeight),
-      group('More',
+    // Advanced section is collapsed by default so Theme / Font / Size stay front and center
+    const advanced = h('details', { class: 'rd-set-advanced' },
+      h('summary', { class: 'rd-set-adv-sum' }, 'Advanced'),
+      h('div', { class: 'rd-set-adv-body' },
         sliders.paraSpacing, sliders.letterSpacing, sliders.wordSpacing, sliders.firstLineIndent, sliders.columnWidth,
         toggleRow({ label: 'Dyslexia-friendly font', value: settings.get('app.dyslexia'), onChange: (v) => { settings.set('app.dyslexia', v); applyVars(); relayout(); } }),
         toggleRow({ label: 'Stop at chapter end', value: !!R().chapterStop, onChange: (v) => Sg('chapterStop', v) }),
         toggleRow({ label: 'Tap sides to turn page', value: R().tapNav !== false, onChange: (v) => Sg('tapNav', v) }),
         toggleRow({ label: 'Auto-hide controls', value: R().autoHide !== false, onChange: (v) => { Sg('autoHide', v); settings.set('reading.autoHide', v); } }),
-        toggleRow({ label: 'Show time remaining', value: R().showTimeLeft !== false, onChange: (v) => { Sg('showTimeLeft', v); report(false); } })),
+        toggleRow({ label: 'Show time remaining', value: R().showTimeLeft !== false, onChange: (v) => { Sg('showTimeLeft', v); report(false); } }),
+      ));
+    wrap.append(
+      group('Theme', themeSw, custom),
+      group('Text', field('Font', fontGrid), sliders.size, field('Alignment', alignSeg)),
+      group('Page', field('Reading style', flowSeg), sliders.margin, sliders.lineHeight),
+      advanced,
       h('button', { class: 'btn ghost', style: { marginTop: '14px' }, onclick: async () => {
         const d = settings.DEFAULTS.reading;
         for (const k of settings.BOOK_PREF_KEYS) { settings.set('reading.' + k, d[k]); }
@@ -930,7 +994,8 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
         Object.entries(sliders).forEach(([k, el]) => el.set?.(d[k] ?? 0));
         alignSeg.set(d.align); flowSeg.set?.(d.flow);
         [...fontGrid.children].forEach((b, i) => b.classList.toggle('on', fonts[i][0] === d.font));
-      } }, 'Reset to defaults'));
+        toast('Defaults restored for this book');
+      } }, 'Reset this book to defaults'));
     return wrap;
   }
 
@@ -998,7 +1063,23 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       size: book.size,
       format: 'EPUB',
     }),
-    onChrome: () => {},
+    onChrome: (on) => {
+      chromeOpen = !!on;
+      if (destroyed) return;
+      const prevH = geo.H;
+      measureGeo();
+      // Only remeasure pages if the content height actually changed enough to matter
+      if (Math.abs(geo.H - prevH) < 4) return;
+      if (flowMode() === 'scroll' && scroller) {
+        scroller.style.paddingTop = Math.max(28, geo.top) + 'px';
+        scroller.style.paddingBottom = Math.max(48, geo.sb + 56) + 'px';
+        report(false);
+      } else if (units.cur) {
+        scheduleRemeasure(units.cur);
+        if (units.next) scheduleRemeasure(units.next);
+        if (units.prev) scheduleRemeasure(units.prev);
+      }
+    },
     destroy() {
       destroyed = true;
       removeEventListener('keydown', onKey);

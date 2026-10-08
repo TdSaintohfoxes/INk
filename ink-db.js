@@ -127,8 +127,15 @@ export async function setMembership(cid, bid, on) {
 
 /* ---------------- bookmarks / highlights ---------------- */
 export const listBookmarks = async (bookId) => (await byIndex('bookmarks', 'bookId', bookId)).sort((a, b) => a.createdAt - b.createdAt);
-export async function addBookmark(bookId, location, title) {
-  const b = { id: uid(), bookId, location, title, createdAt: Date.now() };
+export async function addBookmark(bookId, location, title, note = '') {
+  const b = { id: uid(), bookId, location, title, note: note || '', createdAt: Date.now() };
+  await put('bookmarks', b);
+  return b;
+}
+export async function saveBookmark(b) {
+  if (!b.id) b.id = uid();
+  if (!b.createdAt) b.createdAt = Date.now();
+  if (b.note == null) b.note = '';
   await put('bookmarks', b);
   return b;
 }

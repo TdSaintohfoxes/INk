@@ -8,9 +8,10 @@ export const DEFAULTS = {
     theme: 'auto',            // auto = follows the app theme
     customBg: '#f6f1e4', customFg: '#24211b',
     font: 'serif',            // serif | sans | humanist | mono | dyslexic
-    size: 19, lineHeight: 1.6, letterSpacing: 0, wordSpacing: 0, paraSpacing: 0.7,
-    firstLineIndent: 0,       // em
-    margin: 22, align: 'left', columnWidth: 640,
+    // Comfortable out-of-the-box defaults (fewer settings-tweaking cycles)
+    size: 18, lineHeight: 1.55, letterSpacing: 0, wordSpacing: 0, paraSpacing: 0.55,
+    firstLineIndent: 1.25,    // em — classic book feel
+    margin: 24, align: 'left', columnWidth: 640,
     flow: 'paged',            // paged | scroll
     autoHide: true, tapNav: true,
     chapterStop: false,       // stop at chapter end and offer Continue
