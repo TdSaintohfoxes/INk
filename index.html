@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>INK</title>
+<meta name="description" content="INK — a private, offline reader for EPUB, PDF and comics.">
+<meta name="theme-color" content="#0c0c0e">
+<meta name="color-scheme" content="dark light">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="INK">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Inter:wght@400;500;600;700&family=Lexend:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap">
+<script>
+/* apply theme before first paint */
+try {
+  var b = JSON.parse(localStorage.getItem('ink-boot') || 'null'), r = document.documentElement;
+  if (b) {
+    var t = b.t === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : b.t;
+    r.dataset.theme = t || 'dark';
+    if (b.hc) r.dataset.hc = ''; if (b.d) r.dataset.dyslexia = ''; if (b.rm || b.a === false) r.dataset.motion = 'reduce';
+    if (b.s) r.style.setProperty('--ui-scale', b.s);
+    document.querySelector('meta[name=theme-color]').content = { light: '#f4f0e7', dark: '#0c0c0e', oled: '#000' }[t] || '#0c0c0e';
+  } else if (matchMedia('(prefers-color-scheme: light)').matches) r.dataset.theme = 'light';
+} catch (e) {}
+</script>
+<link rel="stylesheet" href="ink.css">
+<link rel="stylesheet" href="ink-reader.css">
+<style>
+#splash { position: fixed; inset: 0; z-index: 999; display: grid; place-items: center; background: var(--bg); transition: opacity .25s; }
+#splash span { font-family: var(--font-serif); font-size: 2rem; letter-spacing: .32em; text-indent: .32em; color: var(--text); opacity: .9; }
+.ready #splash { opacity: 0; pointer-events: none; }
+.boot-error { position: fixed; inset: 0; z-index: 1000; display: grid; place-content: center; gap: 12px; text-align: center; background: var(--bg); padding: 24px; }
+#reader-root { position: fixed; inset: 0; z-index: 50; }
+</style>
+</head>
+<body>
+<div id="splash" aria-hidden="true"><span>INK</span></div>
+<div id="app" class="app">
+  <nav id="sidebar" class="sidebar" aria-label="Main"></nav>
+  <main id="view" class="view" tabindex="-1"></main>
+  <nav id="tabbar" class="tabbar" aria-label="Main"></nav>
+</div>
+<div id="reader-root" hidden></div>
+<div id="overlay-root"></div>
+<noscript><p style="padding:24px;color:#ccc">INK needs JavaScript.</p></noscript>
+<script type="module" src="ink-app.js"></script>
+</body>
+</html>
