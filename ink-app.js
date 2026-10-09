@@ -149,6 +149,7 @@ function tabFor(parts) {
 
 function setNav(active) {
   document.querySelectorAll('[data-tab]').forEach((el) => { if (el.dataset.tab === active) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current'); });
+  requestAnimationFrame(() => moveTabGlow());
   document.querySelectorAll('[data-side]').forEach((el) => { el.removeAttribute('aria-current'); if (el.dataset.side === (location.hash || '#/')) el.setAttribute('aria-current', 'page'); });
 }
 
@@ -215,12 +216,23 @@ async function closeReader() {
 /* ---------------- sidebar + tab bar ---------------- */
 function buildNav() {
   const tabbar = $('#tabbar');
-  tabbar.append(...TABS.map(([href, label, ic]) => h('a', { class: 'tab', href, 'data-tab': href }, icon(ic, 24), h('span', null, label))));
+  tabbar.append(h('i', { class: 'tab-glow', 'aria-hidden': 'true' }), ...TABS.map(([href, label, ic]) => h('a', { class: 'tab', href, 'data-tab': href }, icon(ic, 24), h('span', null, label))));
   $('#sidebar').replaceChildren(h('div', { class: 'wordmark' }, 'INK'),
     ...TABS.map(([href, label, ic]) => h('a', { class: 'side-link', href, 'data-side': href, 'data-tab': href }, icon(ic, 20), label)),
     h('div', { id: 'side-lib' }),
     h('button', { class: 'side-link', style: { marginTop: 'auto' }, onclick: importMenu }, icon('plus', 20), 'Import'));
 }
+export function moveTabGlow() {
+  const bar = document.getElementById('tabbar'), glow = bar?.querySelector('.tab-glow'), cur = bar?.querySelector('.tab[aria-current="page"]');
+  if (!glow) return;
+  if (!cur || !bar.offsetWidth) { glow.style.opacity = '0'; return; }
+  glow.style.width = cur.offsetWidth + 'px';
+  glow.style.transform = `translateX(${cur.offsetLeft}px)`;
+  if (!glow.dataset.init) { glow.style.transition = 'none'; void glow.offsetWidth; }
+  glow.style.opacity = '1';
+  if (!glow.dataset.init) { glow.dataset.init = '1'; requestAnimationFrame(() => { glow.style.transition = ''; }); }
+}
+addEventListener('resize', () => moveTabGlow());
 function renderSide() {
   const el = $('#side-lib'); if (!el) return;
   const all = lib.books();

@@ -8,7 +8,7 @@
   --sb: env(safe-area-inset-bottom, 0px);
   --sl: env(safe-area-inset-left, 0px);
   --sr: env(safe-area-inset-right, 0px);
-  --nav-h: 58px;
+  --nav-h: 72px;
   --pad: 20px;
   --ui-scale: 1;
   color-scheme: dark;
@@ -66,16 +66,22 @@ img { display: block; max-width: 100%; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .tabbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex;
-  background: color-mix(in srgb, var(--bg) 62%, transparent);
-  -webkit-backdrop-filter: blur(24px) saturate(1.45); backdrop-filter: blur(24px) saturate(1.45);
-  border-top: 1px solid color-mix(in srgb, #fff 8%, transparent);
-  box-shadow: 0 -4px 24px rgba(0,0,0,.18), inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
-  padding-bottom: var(--sb);
+  position: fixed; left: 50%; bottom: calc(var(--sb) + 10px); z-index: 30; display: flex; transform: translateX(-50%);
+  width: min(calc(100% - 28px), 420px); padding: 6px; border-radius: 32px; isolation: isolate;
+  background: color-mix(in srgb, var(--bg) 52%, transparent);
+  -webkit-backdrop-filter: blur(26px) saturate(1.7); backdrop-filter: blur(26px) saturate(1.7);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  box-shadow: 0 10px 34px rgba(0,0,0,.2), 0 2px 6px rgba(0,0,0,.08), inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent), inset 0 -1px 0 color-mix(in srgb, #000 8%, transparent);
 }
-.tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: var(--nav-h); color: var(--muted); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; }
+.tab-glow { position: absolute; z-index: 0; top: 6px; bottom: 6px; left: 0; width: 0; border-radius: 26px; pointer-events: none; opacity: 0;
+  background: color-mix(in srgb, var(--text) 9%, transparent); border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent), 0 2px 10px rgba(0,0,0,.08);
+  transition: transform .38s cubic-bezier(.3,1.25,.5,1), width .38s cubic-bezier(.3,1.25,.5,1), opacity .2s; }
+.tab { text-decoration: none !important; position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 52px; border-radius: 26px; color: var(--muted); font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; transition: color .2s, transform .15s; -webkit-tap-highlight-color: transparent; }
+.tab:active { transform: scale(.94); }
 .tab[aria-current="page"] { color: var(--text); }
 .tab[aria-current="page"] svg { color: var(--accent); }
+.tab span { text-decoration: none !important; }
 
 .sidebar { display: none; flex-direction: column; gap: 4px; padding: calc(var(--st) + 26px) 14px 20px; border-right: 1px solid var(--line); background: var(--bg); overflow-y: auto; }
 .sidebar .wordmark { padding: 0 12px 22px; }
@@ -420,3 +426,20 @@ img { display: block; max-width: 100%; }
 .wk.hit .wk-bar i, .wk.today .wk-bar i { background: var(--accent); }
 .wk span { font-size: .66rem; color: var(--muted); }
 .wk.today span { color: var(--text); font-weight: 600; }
+
+/* Hero: glass finish */
+.hero { box-shadow: 0 18px 40px rgba(0,0,0,.22), inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent); border: 1px solid color-mix(in srgb, #fff 14%, transparent); }
+.hero-go { padding: 0 16px 0 18px; border-radius: 99px; background: color-mix(in srgb, #fff 16%, transparent); border: 1px solid color-mix(in srgb, #fff 26%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5); box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent); }
+.hero:active .hero-go { transform: scale(.97); }
+.today-card { display: flex; align-items: center; gap: 14px; width: 100%; margin: 12px 0 0; padding: 12px 16px; border-radius: 22px; text-align: left; color: var(--text);
+  background: color-mix(in srgb, var(--surface) 70%, transparent); border: 1px solid var(--line-strong);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5); backdrop-filter: blur(20px) saturate(1.5); box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent); }
+.today-card:active { transform: scale(.985); }
+.today-ring { width: 44px; height: 44px; flex: none; }
+.today-ring .goal-track { stroke: color-mix(in srgb, var(--text) 12%, transparent); }
+.today-ring .goal-fill { stroke: var(--accent); }
+.today-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.today-t b { font: 500 1rem var(--font-serif); }
+.today-t span { font-size: .76rem; color: var(--muted); }
+.today-card .chev { color: var(--faint); }

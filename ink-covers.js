@@ -107,51 +107,55 @@ export async function pdfCover(pdf) {
   return last ? new Promise((res) => last.toBlob((b) => res(b), 'image/jpeg', 0.84)) : null;
 }
 
-/** Quiet typographic cover for books without artwork */
+/** Typographic cover for books without artwork: deep tone, spine, watermark initial, quiet rules */
 export function typographicCover(title, author, tag) {
   const W = THUMB_W, H = Math.round(THUMB_W * 1.5);
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const hue = hashHue(title || 'x');
-  const g = ctx.createLinearGradient(0, 0, W, H);
-  g.addColorStop(0, `hsl(${hue} 22% 17%)`);
-  g.addColorStop(1, `hsl(${(hue + 24) % 360} 26% 9%)`);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = `hsl(${hue} 40% 62% / .5)`; ctx.lineWidth = 1.5;
-  ctx.strokeRect(20, 20, W - 40, H - 40);
-  ctx.fillStyle = '#efe9dc';
-  ctx.textBaseline = 'alphabetic';
   const serif = 'Newsreader, "Iowan Old Style", Georgia, serif';
-  let size = 34;
-  let lines;
-  const wrap = (txt, font, maxW) => {
-    ctx.font = font;
-    const out = []; let line = '';
-    for (const w of String(txt).split(/\s+/)) {
-      const t = line ? line + ' ' + w : w;
-      if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t;
-    }
-    if (line) out.push(line);
-    return out;
+  // ground
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, `hsl(${hue} 30% 21%)`); g.addColorStop(1, `hsl(${(hue + 26) % 360} 34% 9%)`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.8, H * 0.12, 10, W * 0.8, H * 0.12, H * 0.7);
+  glow.addColorStop(0, `hsl(${hue} 55% 60% / .28)`); glow.addColorStop(1, `hsl(${hue} 55% 60% / 0)`);
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+  // watermark initial
+  const initial = (String(title || '?').match(/\p{L}/u) || ['?'])[0].toUpperCase();
+  ctx.save(); ctx.fillStyle = `hsl(${hue} 45% 70% / .09)`; ctx.font = `700 ${Math.round(H * 0.78)}px ${serif}`; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(initial, W * 0.3, H * 0.86); ctx.restore();
+  // grain
+  for (let i = 0; i < 900; i++) { ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.035})`; ctx.fillRect(Math.random() * W, Math.random() * H, 1.4, 1.4); }
+  // spine
+  const sp = ctx.createLinearGradient(0, 0, 26, 0);
+  sp.addColorStop(0, 'rgba(0,0,0,.45)'); sp.addColorStop(0.55, 'rgba(0,0,0,.12)'); sp.addColorStop(0.62, 'rgba(255,255,255,.14)'); sp.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = sp; ctx.fillRect(0, 0, 26, H);
+  // rules
+  const x0 = 46, maxW = W - x0 - 30;
+  ctx.fillStyle = `hsl(${hue} 55% 68% / .85)`; ctx.fillRect(x0, Math.round(H * 0.17), 34, 2);
+  ctx.fillStyle = '#f1ebdd'; ctx.textBaseline = 'alphabetic';
+  const wrap = (txt, font, mw) => {
+    ctx.font = font; const out = []; let line = '';
+    for (const w of String(txt).split(/\s+/)) { const t = line ? line + ' ' + w : w; if (ctx.measureText(t).width > mw && line) { out.push(line); line = w; } else line = t; }
+    if (line) out.push(line); return out;
   };
-  for (; size >= 20; size -= 2) {
-    lines = wrap(title || 'Untitled', `600 ${size}px ${serif}`, W - 76);
-    if (lines.length <= 5) break;
-  }
+  let size = 40, lines = [];
+  for (; size >= 20; size -= 2) { lines = wrap(title || 'Untitled', `600 ${size}px ${serif}`, maxW); if (lines.length <= 5) break; }
   lines = lines.slice(0, 6);
-  let y = Math.round(H * 0.34);
+  let y = Math.round(H * 0.17) + 20 + size;
   ctx.font = `600 ${size}px ${serif}`;
-  for (const l of lines) { ctx.fillText(l, 38, y); y += size * 1.2; }
+  ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8;
+  for (const l of lines) { ctx.fillText(l, x0, y); y += size * 1.14; }
+  ctx.shadowBlur = 0;
   if (author) {
-    ctx.fillStyle = `hsl(${hue} 30% 72%)`;
-    ctx.font = `400 17px ${serif}`;
-    const al = wrap(author, `400 17px ${serif}`, W - 76).slice(0, 2);
-    y += 14;
-    for (const l of al) { ctx.fillText(l, 38, y); y += 22; }
+    ctx.fillStyle = `hsl(${hue} 35% 76%)`; ctx.font = `italic 400 18px ${serif}`;
+    const al = wrap(author, `italic 400 18px ${serif}`, maxW).slice(0, 2);
+    let ay = H - 66 - (al.length - 1) * 24;
+    for (const l of al) { ctx.fillText(l, x0, ay); ay += 24; }
   }
-  ctx.fillStyle = `hsl(${hue} 20% 60% / .8)`;
-  ctx.font = '600 11px system-ui, sans-serif';
-  ctx.fillText(String(tag || '').toUpperCase().split('').join(' '), 38, H - 38);
-  return new Promise((res) => c.toBlob((b) => res(b), 'image/jpeg', 0.88));
+  ctx.fillStyle = `hsl(${hue} 30% 62% / .8)`; ctx.font = '600 11px system-ui, sans-serif';
+  ctx.fillText(String(tag || '').toUpperCase().split('').join(' '), x0, H - 32);
+  return new Promise((res) => c.toBlob((b) => res(b), 'image/jpeg', 0.9));
 }
