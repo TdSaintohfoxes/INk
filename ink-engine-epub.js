@@ -227,8 +227,14 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     // so offsets / highlights stay stable. It only appears on the first page of the unit.
     const headLabel = chapterHeadLabel(s, p);
     if (headLabel) {
-      body.append(h('div', { class: 'ep-chap-head', 'aria-label': 'Chapter' },
-        h('div', { class: 'ep-chap-title' }, headLabel)));
+      // If the book already opens with its own heading, don't repeat the title: keep an ornament and
+      // restyle the book's heading as the chapter opener instead.
+      const norm = (t) => (t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+      const ownH = part.el.querySelector('h1,h2,h3');
+      const dup = p === 0 && ownH && norm(ownH.textContent) && (norm(ownH.textContent) === norm(headLabel) || norm(headLabel).includes(norm(ownH.textContent)) || norm(ownH.textContent).includes(norm(headLabel)));
+      if (dup) ownH.classList.add('ep-open-h');
+      body.append(h('div', { class: dup ? 'ep-chap-head orn' : 'ep-chap-head', 'aria-label': 'Chapter' },
+        dup ? null : h('div', { class: 'ep-chap-title' }, headLabel)));
     }
     body.append(part.el);
     slot.append(body);

@@ -177,7 +177,7 @@
   font-size: calc(var(--ep-size) * 1px); line-height: var(--ep-lh);
   letter-spacing: calc(var(--ep-ls) * 1em); word-spacing: calc(var(--ep-ws, 0) * 1em);
   text-align: var(--ep-align); hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
-  overflow: hidden;
+  /* no overflow clip here: paged columns overflow to the right and the body is translated; the slot does the clipping */
   orphans: 3; widows: 3;
 }
 .ep-body.cols { column-fill: auto; column-gap: calc(var(--ep-gap) * 1px); }
@@ -248,6 +248,8 @@
   font-size: clamp(.78rem, 2.4vw, .95rem); letter-spacing: .14em;
   color: color-mix(in srgb, var(--ep-fg) 62%, transparent);
 }
+.ep-chap-head.orn { min-height: 12%; padding: 6% 4% .4em; margin-bottom: 0; }
+.ep-body h1.ep-open-h, .ep-body h2.ep-open-h, .ep-body h3.ep-open-h { text-align: center; font-size: 1.85em; font-weight: 600; letter-spacing: .01em; margin: .2em 0 1.2em; }
 .ep-part { content-visibility: auto; contain-intrinsic-size: auto 2000px; }
 .ep-body.cols .ep-part, .ep-body.single .ep-part, .ep-body.measure .ep-part { content-visibility: visible; contain: none; }
 .ep-flow { position: relative; }
