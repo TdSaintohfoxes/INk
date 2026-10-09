@@ -4,6 +4,7 @@ import * as settings from './ink-settings.js';
 import * as db from './ink-db.js';
 import * as lib from './ink-lib.js';
 import * as stats from './ink-stats.js';
+import * as dict from './ink-dict.js';
 import { openSheet, segmented, slider, toggleRow, field, group, swatches, toast, confirmDialog } from './ink-ui.js';
 
 const S = settings;
@@ -22,7 +23,7 @@ export function renderSettings(root, ctx) {
       toggleRow({ label: 'Animations', hint: 'Page and screen transitions', value: S.get('app.animations'), onChange: (v) => S.set('app.animations', v) })),
 
     group('Reading',
-      field('Page behavior', segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], S.get('reading.flow'), (v) => S.set('reading.flow', v)), 'For EPUB. You can also change it while reading.'),
+      field('Page behavior', segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'chapter', label: 'Chapter', icon: 'scroll' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], S.get('reading.flow'), (v) => S.set('reading.flow', v)), 'For EPUB. Chapter = scroll within a chapter, swipe sideways between chapters.'),
       field('Default font', segmented([{ value: 'serif', label: 'Serif' }, { value: 'sans', label: 'Sans' }, { value: 'humanist', label: 'Humanist' }, { value: 'mono', label: 'Mono' }], S.get('reading.font'), (v) => S.set('reading.font', v), { wrap: true })),
       slider({ label: 'Default margins', min: 4, max: 80, step: 2, value: S.get('reading.margin'), format: (v) => v + ' px', onInput: (v) => S.set('reading.margin', v) }),
       field('Default reading direction', segmented([{ value: 'ltr', label: 'Left to right' }, { value: 'rtl', label: 'Right to left (manga)' }], S.get('reading.direction'), (v) => S.set('reading.direction', v)), 'Used for comics unless the file says otherwise.'),
@@ -34,6 +35,8 @@ export function renderSettings(root, ctx) {
       field('Grid size', segmented([{ value: 's', label: 'Small' }, { value: 'm', label: 'Medium' }, { value: 'l', label: 'Large' }], S.get('library.gridSize'), (v) => S.set('library.gridSize', v))),
       toggleRow({ label: 'Group series automatically', hint: 'Volumes with matching names are stacked. You can always fix a book by hand.', value: S.get('library.group'), onChange: (v) => S.set('library.group', v) }),
       toggleRow({ label: 'Progress on covers', value: S.get('library.showProgress'), onChange: (v) => S.set('library.showProgress', v) })),
+
+    dictionaryGroup(),
 
     storageGroup(ctx),
 
@@ -91,14 +94,41 @@ function storageGroup(ctx) {
 
 export async function showStats() {
   const s = await stats.summary();
+  const goalMin = +settings.get('reading.dailyGoal') || 0;
+  const NS = 'http://www.w3.org/2000/svg';
+  const ring = (frac) => {
+    const R = 46, C = 2 * Math.PI * R;
+    const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 110 110'); svg.setAttribute('class', 'goal-ring');
+    const mk = (cls, dash) => { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', 55); c.setAttribute('cy', 55); c.setAttribute('r', R); c.setAttribute('class', cls); c.setAttribute('fill', 'none'); c.setAttribute('stroke-width', 9); c.setAttribute('stroke-linecap', 'round'); if (dash != null) { c.setAttribute('stroke-dasharray', `${C} ${C}`); c.setAttribute('stroke-dashoffset', String(C * (1 - dash))); c.setAttribute('transform', 'rotate(-90 55 55)'); } return c; };
+    svg.append(mk('goal-track'), mk('goal-fill', Math.min(1, frac)));
+    return svg;
+  };
+  const todayMin = Math.floor(s.todaySeconds / 60);
+  const goalCard = () => {
+    const frac = goalMin ? s.todaySeconds / (goalMin * 60) : 0;
+    const chips = segmented([{ value: '0', label: 'Off' }, { value: '10', label: '10' }, { value: '20', label: '20' }, { value: '30', label: '30' }, { value: '60', label: '60' }], String(goalMin), (v) => { settings.set('reading.dailyGoal', +v); toast(+v ? `Daily goal: ${v} min` : 'Daily goal off'); }, { label: 'Daily goal in minutes' });
+    return h('div', { class: 'goal-card' },
+      h('div', { class: 'goal-top' },
+        h('div', { class: 'goal-ringwrap' }, ring(frac), h('div', { class: 'goal-center' }, h('b', null, String(todayMin)), h('span', null, goalMin ? `of ${goalMin} min` : 'min today'))),
+        h('div', { class: 'goal-text' },
+          h('div', { class: 'goal-streak' }, s.streak ? s.streak + (s.streak === 1 ? ' day streak' : ' day streak') : 'No streak yet'),
+          h('div', { class: 'row-hint' }, goalMin ? (frac >= 1 ? 'Goal reached today. Lovely.' : `${Math.max(1, goalMin - todayMin)} min to go`) : 'Pick a daily goal to start a streak'))),
+      chips);
+  };
+  const max = Math.max(60 * 10, ...s.days.map((d) => d.seconds));
+  const week = h('div', { class: 'week-bars', role: 'img', 'aria-label': 'Reading time over the last seven days' },
+    s.days.map((d) => h('div', { class: 'wk' + (d.today ? ' today' : '') + (goalMin && d.seconds >= goalMin * 60 ? ' hit' : '') },
+      h('div', { class: 'wk-bar' }, h('i', { style: { height: Math.max(d.seconds ? 6 : 2, Math.round((d.seconds / max) * 100)) + '%' } })),
+      h('span', null, d.dow.slice(0, 3)))));
   openSheet({
     title: 'Reading statistics', size: 'm',
     body: () => h('div', null,
+      goalCard(), week,
       h('div', { class: 'stat-grid' },
         stat(fmtMinutes(s.totalSeconds / 60), 'Time reading'), stat(fmtMinutes(s.weekSeconds / 60), 'This week'),
         stat(String(s.completed), 'Finished'), stat(String(s.pagesRead), 'Pages turned'),
         stat(s.streak ? s.streak + (s.streak === 1 ? ' day' : ' days') : '—', 'Current streak'), stat(s.pace ? s.pace + ' / hour' : '—', 'Average pace')),
-      h('p', { class: 'row-hint', style: { marginTop: '16px' } }, 'Kept on this device only. No goals, no badges — it is here if you are curious.')),
+      h('p', { class: 'row-hint', style: { marginTop: '16px' } }, 'Kept on this device only. Your goal is a gentle target — no badges, no pressure.')),
   });
 }
 const stat = (v, l) => h('div', { class: 'stat' }, h('b', null, v), h('span', null, l));
@@ -113,4 +143,23 @@ function showLicenses() {
       h('div', { class: 'row' }, h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, 'Newsreader · Inter · Lexend · Atkinson Hyperlegible'), h('span', { class: 'row-hint' }, 'Open-source typefaces (SIL OFL), loaded from Google Fonts when online')), null),
       h('p', { class: 'row-hint', style: { marginTop: '14px' } }, 'Full licence texts: see vendor-pdfjs-LICENSE.txt in the app files.')),
   });
+}
+
+function dictionaryGroup() {
+  const status = h('span', { class: 'row-hint' }, 'Checking…');
+  const refresh = async () => { const n = await dict.packSize(); status.textContent = n ? `${n.toLocaleString()} words on this device` : 'No dictionary file added yet'; };
+  refresh();
+  const input = h('input', { type: 'file', accept: '.json,.txt,.tsv,.csv,text/plain,application/json', style: { display: 'none' } });
+  input.addEventListener('change', async () => {
+    const f = input.files?.[0]; input.value = ''; if (!f) return;
+    try { toast('Reading dictionary…'); const n = await dict.importPack(f); toast(`Added ${n.toLocaleString()} words`); } catch (e) { toast(e.message || 'Couldn’t read that file'); }
+    refresh();
+  });
+  return group('Dictionary',
+    h('p', { class: 'row-hint', style: { margin: '4px 0 10px' } }, 'Select a word while reading and tap Define. Add a dictionary file (JSON, or text with one “word, a tab, then the meaning” per line) to define words fully offline.'),
+    status,
+    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', margin: '12px 0' } },
+      h('button', { class: 'btn ghost', onclick: () => input.click() }, 'Add dictionary file'),
+      h('button', { class: 'btn ghost', onclick: async () => { if (await confirmDialog({ title: 'Remove dictionary?', message: 'Words you looked up online stay saved.', confirmLabel: 'Remove' })) { await dict.clearPack(); refresh(); } } }, 'Remove'), input),
+    toggleRow({ label: 'Allow online lookups', hint: 'Sends only the selected word to dictionaryapi.dev when it isn’t found offline. Results are saved for offline use.', value: S.get('app.dictOnline'), onChange: (v) => S.set('app.dictOnline', v) }));
 }

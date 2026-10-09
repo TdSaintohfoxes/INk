@@ -9,6 +9,7 @@ import * as db from './ink-db.js';
 import { loadPdfjs, openPdf, isPasswordError } from './ink-pdfjs.js';
 import { segmented, slider, toggleRow, field, group, swatches, toast } from './ink-ui.js';
 import { showSelBar } from './ink-selbar.js';
+import { define, isWord } from './ink-dict.js';
 import { hlColor } from './ink-reader.js';
 
 const GAP = 10, MARGIN = 8, MAX_PIXELS = 9e6;
@@ -60,12 +61,8 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   function applyTheme() {
     const t = settings.readingTheme(), r = settings.get('reading.theme');
     const key = r === 'auto' ? settings.resolvedTheme() : r;
-    const scanned = !!(book.meta && book.meta.scanned);
-    // Scanned / image PDFs (comics, photos) keep true page colours — only the
-    // surrounding chrome uses the reading theme. Text PDFs still get night recolour.
-    root.classList.toggle('scanned', scanned);
-    root.classList.toggle('dark', !scanned && (key === 'dark' || key === 'oled'));
-    root.classList.toggle('sepia', !scanned && key === 'sepia');
+    root.classList.toggle('dark', key === 'dark' || key === 'oled');
+    root.classList.toggle('sepia', key === 'sepia');
     const bg = key === 'oled' ? '#000' : key === 'dark' ? '#101012' : key === 'sepia' ? '#cfc2a2' : key === 'custom' ? t.bg : '#c9c6bf';
     root.style.setProperty('--pd-bg', bg); host.style.setProperty('--rd-bg', bg);
   }
@@ -474,6 +471,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const rr = range.getBoundingClientRect();
     closeBar = showSelBar({
       host: root, rect: rr,
+      onDefine: isWord(text) ? () => { sel.removeAllRanges(); closeBar?.(); closeBar = null; define(text); } : null,
       onColor: async (color) => {
         const hh = await db.saveHighlight({ bookId: book.id, location: { page: pi }, rects: merge(rects), text: text.slice(0, 600), color, label: 'Page ' + (pi + 1) });
         marks.push(hh); drawHl(pi); sel.removeAllRanges(); closeBar?.(); closeBar = null; api.interaction();
@@ -545,18 +543,13 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
 
   /* ---------- scanned detection ---------- */
   (async () => {
-    if (book.meta?.scanned !== undefined) {
-      applyTheme(); // ensure invert is off if this was already flagged as scanned
-      if (book.meta.scanned) toast('This looks like a scanned PDF — text search and selection aren’t available.', { ms: 5000 });
-      return;
-    }
+    if (book.meta?.scanned !== undefined) { if (book.meta.scanned) toast('This looks like a scanned PDF — text search and selection aren’t available.', { ms: 5000 }); return; }
     let chars = 0;
     const probe = [0, 1, 2, Math.floor(N / 2), N - 1].filter((v, i, a) => v >= 0 && v < N && a.indexOf(v) === i);
     for (const i of probe) { try { chars += (await (await getPage(i)).getTextContent()).items.reduce((n, it) => n + (it.str || '').length, 0); } catch { /* ignore */ } }
     const scanned = N > 0 && chars < 20;
     db.patchBook(book.id, { meta: { ...book.meta, scanned } }, { silent: true }).catch(() => {});
     book.meta = { ...book.meta, scanned };
-    applyTheme(); // drop invert/sepia on image pages as soon as we know
     if (scanned && !destroyed) toast('This looks like a scanned PDF — text search and selection aren’t available.', { ms: 5500 });
   })();
 
@@ -612,10 +605,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       wrap.append(
         group('Layout', field('Page layout', modeSeg), field('Fit', fitSeg), zoomCtl,
           toggleRow({ label: 'Trim margins', hint: 'Crops the white borders around text', value: P().trim, onChange: async (v) => { settings.set('pdf.trim', v); await computeTrim(); rebuild(); } })),
-        group('Appearance', field('Page colour', swatches(items, settings.get('reading.theme') === 'custom' ? 'auto' : settings.get('reading.theme'), (v) => settings.set('reading.theme', v)),
-          book.meta?.scanned
-            ? 'Scanned and comic PDFs always show true page colours. Dark theme only changes the background around the page.'
-            : 'Dark and sepia recolour text pages for night reading. Image and scanned pages stay true-colour automatically.')));
+        group('Appearance', field('Page colour', swatches(items, settings.get('reading.theme') === 'custom' ? 'auto' : settings.get('reading.theme'), (v) => settings.set('reading.theme', v)), 'Dark and sepia recolour the pages for comfortable night reading.')));
       return wrap;
     },
     destroy() {

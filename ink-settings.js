@@ -3,7 +3,7 @@ import * as db from './ink-db.js';
 import { Emitter } from './ink-util.js';
 
 export const DEFAULTS = {
-  app: { theme: 'system', animations: true, textScale: 1, highContrast: false, dyslexia: false, reduceMotion: false },
+  app: { theme: 'system', animations: true, textScale: 1, highContrast: false, dyslexia: false, reduceMotion: false, dictOnline: false },
   reading: {
     theme: 'auto',            // auto = follows the app theme
     customBg: '#f6f1e4', customFg: '#24211b',
@@ -17,6 +17,9 @@ export const DEFAULTS = {
     chapterStop: false,       // stop at chapter end and offer Continue
     showTimeLeft: true,
     direction: 'ltr',         // default direction for comics
+    warm: 0, dim: 0,          // night reading overlays (%)
+    nightAuto: false, nightFrom: '21:00', nightTo: '06:00',
+    dailyGoal: 0,             // minutes per day, 0 = off
   },
   library: { view: 'grid', sort: 'added', sortDir: 'desc', gridSize: 'm', group: true, filter: 'all', showProgress: true },
   pdf: { mode: 'continuous', fit: 'width', trim: false },

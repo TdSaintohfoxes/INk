@@ -1,11 +1,17 @@
 /* INK — quiet reading statistics. Local only. No goals, no XP, no nagging. */
 import * as db from './ink-db.js';
 import { fmtDay } from './ink-util.js';
+import * as settings from './ink-settings.js';
 
 let sess = null;
 let timer = 0;
 let lastTouch = 0;
 const IDLE_MS = 120000;
+let goalListener = null, base = 0, notifiedDay = '';
+export function onGoal(fn) { goalListener = fn; return () => { if (goalListener === fn) goalListener = null; }; }
+async function loadBase(day) {
+  try { base = (await db.allSessions()).filter((x) => x.day === day).reduce((n, x) => n + x.seconds, 0); } catch { base = 0; }
+}
 
 export function interaction() { lastTouch = Date.now(); }
 
@@ -13,10 +19,13 @@ export function begin(bookId) {
   end();
   lastTouch = Date.now();
   sess = { bookId, seconds: 0, pages: 0, flushedSeconds: 0, flushedPages: 0, day: fmtDay() };
+  base = Infinity; loadBase(sess.day);
   timer = setInterval(() => {
     if (!sess) return;
     if (document.visibilityState === 'visible' && Date.now() - lastTouch < IDLE_MS) sess.seconds += 5;
     if (sess.seconds - sess.flushedSeconds >= 30) flush();
+    const goal = (+settings.get('reading.dailyGoal') || 0) * 60;
+    if (goal && base !== Infinity && base + sess.seconds >= goal && notifiedDay !== sess.day && (base + sess.seconds - 5) < goal + 60) { notifiedDay = sess.day; try { goalListener?.(); } catch { /* ignore */ } }
   }, 5000);
   addEventListener('pagehide', flush);
   document.addEventListener('visibilitychange', onVis);
@@ -57,9 +66,10 @@ export async function summary() {
   // streak: consecutive days (>= 1 min) ending today – or yesterday, so a quiet morning doesn't read as a broken streak
   let streak = 0, i = (byDay.get(today) || 0) >= 60 ? 0 : 1;
   while ((byDay.get(dayKey(i)) || 0) >= 60) { streak++; i++; }
+  const days = []; for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push({ day: fmtDay(d), dow: d.toLocaleDateString(undefined, { weekday: 'short' }), seconds: byDay.get(fmtDay(d)) || 0, today: i === 0 }); }
   const pace = paged.s >= 600 && paged.p >= 5 ? Math.round((paged.p / paged.s) * 3600) : 0;
   return {
     totalSeconds: total, weekSeconds: week, todaySeconds: byDay.get(today) || 0,
-    completed: books.filter((b) => b.dateFinished).length, pagesRead, streak, pace,
+    days, completed: books.filter((b) => b.dateFinished).length, pagesRead, streak, pace,
   };
 }

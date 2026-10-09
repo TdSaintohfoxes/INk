@@ -5,7 +5,7 @@ const SHELL = ['./', './index.html', './manifest.json', './icon.svg', './icon-19
   './ink.css', './ink-reader.css',
   './ink-app.js', './ink-util.js', './ink-ui.js', './ink-db.js', './ink-settings.js', './ink-lib.js', './ink-meta.js', './ink-zip.js',
   './ink-import.js', './ink-covers.js', './ink-cards.js', './ink-home.js', './ink-browse.js', './ink-search.js', './ink-settings-ui.js',
-  './ink-onboard.js', './ink-stats.js', './ink-pdfjs.js', './ink-comic-src.js',
+  './ink-onboard.js', './ink-stats.js', './ink-night.js', './ink-dict.js', './ink-pdfjs.js', './ink-comic-src.js',
   './ink-reader.js', './ink-selbar.js', './ink-engine-epub.js', './ink-epub-content.js', './ink-engine-pdf.js', './ink-engine-comic.js',
   './vendor-pdf.min.mjs', './vendor-pdf.worker.min.mjs'];
 

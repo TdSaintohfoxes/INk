@@ -22,6 +22,7 @@ import * as db from './ink-db.js';
 import * as lib from './ink-lib.js';
 import * as settings from './ink-settings.js';
 import * as stats from './ink-stats.js';
+import { mountNight } from './ink-night.js';
 import { openSheet, toast, errorView, segmented, promptDialog, confirmDialog, closeAllSheets, topSheet } from './ink-ui.js';
 
 const LOADERS = {
@@ -64,6 +65,9 @@ export async function mountReader(root, book, { exit }) {
   const loading = h('div', { class: 'rd-loading', role: 'status' }, h('div', { class: 'rd-spin' }), h('div', { class: 'rd-load-t' }, 'Opening…'));
   const rd = h('div', { class: 'rd chrome-on', 'data-format': book.format }, stage, top, bottom, pageEl, loading);
   root.replaceChildren(rd);
+  const night = mountNight(rd, { getCtl: () => ctl, exit: () => exit(), toast });
+  unsubs.push(() => night.destroy());
+  unsubs.push(stats.onGoal(() => toast('Daily goal reached. Lovely reading.')));
 
   function openMore() {
     api.interaction();
@@ -71,6 +75,7 @@ export async function mountReader(root, book, { exit }) {
       { label: 'Contents', icon: 'toc', hint: book.format === 'comic' ? 'Pages & chapters' : 'Chapters & sections', onClick: () => openContents() },
       ctl?.search ? { label: 'Search', icon: 'search', hint: 'Find text in this book', onClick: () => openSearch() } : null,
       { label: 'Themes & settings', icon: 'type', hint: 'Font, theme, layout', onClick: () => openSettings() },
+      { label: 'Night & sleep timer', icon: 'moon', hint: 'Warm light, dimming, timer', onClick: () => night.open() },
       { label: 'Bookmarks & highlights', icon: 'bookmark', hint: 'Your marks', onClick: () => openContents('marks') },
       book.format === 'epub' ? { label: 'Book info', icon: 'info', hint: 'Title, author, publisher', onClick: () => openContents('info') } : null,
     ].filter(Boolean);

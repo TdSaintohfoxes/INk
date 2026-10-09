@@ -14,6 +14,7 @@ import { openZip } from './ink-zip.js';
 import { loadEpubPackage, loadEpubToc, mimeOf, fragmentOf } from './ink-meta.js';
 import { loadSection, attachImages, findById, offsetIn, pointAt, wrapChars, unwrapAll, hasMedia, sectionText, snippetOf } from './ink-epub-content.js';
 import { showSelBar } from './ink-selbar.js';
+import { define, isWord } from './ink-dict.js';
 import { hlColor } from './ink-reader.js';
 import { segmented, slider, toggleRow, field, group, swatches, toast, promptDialog, confirmDialog, motionOK, topSheet } from './ink-ui.js';
 
@@ -49,7 +50,9 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   const hudT = h('div', { class: 'ep-hud t' }, hudChapter, h('span'));
   const hudB = h('div', { class: 'ep-hud b' }, hudPage, hudPct);
   const probeEl = h('div', { style: { position: 'absolute', visibility: 'hidden', pointerEvents: 'none', paddingTop: 'var(--st)', paddingBottom: 'var(--sb)' } });
-  const root = h('div', { class: 'ep' }, view, hudT, hudB, probeEl);
+  const glassBar = h('div', { class: 'ep-gbar', 'aria-hidden': 'true' }, h('i'));
+  const glassPill = h('div', { class: 'ep-gpill', 'aria-hidden': 'true' });
+  const root = h('div', { class: 'ep' }, view, hudT, hudB, glassBar, glassPill, probeEl);
   host.replaceChildren(root);
 
   function applyVars() {
@@ -77,7 +80,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const m = R().margin;
     const W = Math.max(180, Math.min(VW - 2 * m, R().columnWidth));
     const left = Math.round((VW - W) / 2);
-    const chromePadT = chromeOpen ? 58 : 28;
+    const chromePadT = chromeOpen ? 66 : 28;
     const chromePadB = chromeOpen ? 76 : 40;
     const top = Math.round(st + chromePadT), bottom = Math.round(sb + chromePadB);
     const H = Math.max(160, VH - top - bottom);
@@ -334,6 +337,14 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
 
   /* ---------- reporting ---------- */
   const ratio = () => (ratioDen ? ratioNum / ratioDen : 0.5);
+  /** Chapter-mode liquid-glass indicators: thin progress capsule + floating chapter pill (pill only when the top chrome is hidden). */
+  function syncGlass() {
+    const on = chapterMode() && !!scroller;
+    glassBar.classList.toggle('on', on); glassPill.classList.toggle('on', on && !chromeOpen && scroller.scrollTop > 140 && !!glassPill.textContent);
+    if (!on) return;
+    const max = Math.max(1, scroller.scrollHeight - scroller.clientHeight);
+    glassBar.firstChild.style.transform = `scaleX(${clamp(scroller.scrollTop / max, 0, 1).toFixed(4)})`;
+  }
   function report(turned = false) {
     if (destroyed) return;
     let s, a, e, sec, atEnd = false, pageText = '';
@@ -348,6 +359,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       ({ s, a, e, sec, atEnd } = p);
     }
     lastPos = { s, a, e };
+    if (flowMode() === 'scroll') { glassPill.textContent = chapterLabelForSection(s) || ''; syncGlass(); }
     const fS = sec.total ? a / sec.total : 0, fE = sec.total ? Math.min(1, e / sec.total) : 1;
     let progress = (cum[s] + sizes[s] * fE) / TOTAL;
     if (atEnd) progress = 1;
@@ -644,7 +656,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     if (t.id) rect = findById(sec, t.id)?.el?.getBoundingClientRect() || null;
     const atStart = !t.id && !(t.a > 0) && !(t.f > 0);
     if (!rect && !(chapterMode() && atStart) && (t.a != null || (t.f ?? 0) > 0)) rect = rectOfOffset(sec, targetOffset(sec, t));
-    if (rect) scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - geo.top + 4;
+    if (rect) scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - (geo.st + 66) + 4;
     else scroller.scrollTop = 0;
     requestAnimationFrame(() => body.classList.remove('measure'));
   }
@@ -685,10 +697,11 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     } finally { scrollBusy = false; }
   }
   const onScroll = debounce(() => { topUp(); report(true); }, 120);
+  const onScrollLive = () => { if (chapterMode()) syncGlass(); };
   function probeScroll() {
     if (!scroller || !flowEl) return null;
     const sr = scroller.getBoundingClientRect();
-    const T = sr.top + geo.top, B = sr.bottom - geo.sb - 12;
+    const T = sr.top + geo.st + 66, B = sr.bottom - geo.sb - 12;
     let start = null, end = null;
     outer:
     for (const body of flowEl.children) {
@@ -725,7 +738,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       scroller.style.overflowAnchor = 'none';
       scroller.classList.toggle('chapter', chapterMode());
       // Keep text clear of the HUD labels and home indicator
-      scroller.style.paddingTop = Math.max(28, geo.top) + 'px';
+      scroller.style.paddingTop = (geo.st + 66) + 'px';
       scroller.style.paddingBottom = Math.max(48, geo.sb + 56) + 'px';
       flowEl = h('div', { class: 'ep-flow' });
       flowEl.style.margin = '0 auto';
@@ -733,6 +746,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       scroller.append(flowEl);
       view.append(scroller);
       scroller.addEventListener('scroll', onScroll, { passive: true });
+      scroller.addEventListener('scroll', onScrollLive, { passive: true });
       await scrollShow(pos, find);
     } else {
       view.replaceChildren(pagesEl);
@@ -880,6 +894,10 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       if (x < geo.VW * 0.28) { turn(nx > 0 ? -1 : 1); return; }
       if (x > geo.VW * 0.72) { turn(nx > 0 ? 1 : -1); return; }
     }
+    if (chapterMode() && R_.tapNav && scroller) {
+      const dir = x < geo.VW * 0.22 ? -1 : x > geo.VW * 0.78 ? 1 : 0;
+      if (dir) { scroller.scrollBy({ top: dir * scroller.clientHeight * 0.85, behavior: motionOK() ? 'smooth' : 'auto' }); api.interaction(); return; }
+    }
     api.toggleChrome();
   }
 
@@ -958,6 +976,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     closeBar = showSelBar({
       host: root, rect: range.getBoundingClientRect(),
       onColor: (c) => save(c),
+      onDefine: isWord(text) ? () => { sel.removeAllRanges(); closeBar?.(); closeBar = null; define(text); } : null,
       onNote: async () => { const n = await promptDialog({ title: 'Add a note', label: 'Note', confirmLabel: 'Save' }); if (n != null) save('yellow', n.trim()); },
       onCopy: () => { navigator.clipboard?.writeText(text).then(() => toast('Copied')).catch(() => toast('Couldn’t copy')); sel.removeAllRanges(); closeBar?.(); closeBar = null; },
     });
@@ -1141,12 +1160,10 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       const prevH = geo.H;
       measureGeo();
       // Only remeasure pages if the content height actually changed enough to matter
+      if (chapterMode()) syncGlass();
+      if (flowMode() === 'scroll') return;   // scroll flows keep constant padding so text never jumps when chrome toggles
       if (Math.abs(geo.H - prevH) < 4) return;
-      if (flowMode() === 'scroll' && scroller) {
-        scroller.style.paddingTop = Math.max(28, geo.top) + 'px';
-        scroller.style.paddingBottom = Math.max(48, geo.sb + 56) + 'px';
-        report(false);
-      } else if (units.cur) {
+      if (units.cur) {
         scheduleRemeasure(units.cur);
         if (units.next) scheduleRemeasure(units.next);
         if (units.prev) scheduleRemeasure(units.prev);

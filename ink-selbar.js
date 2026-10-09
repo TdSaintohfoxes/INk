@@ -6,11 +6,12 @@ import { HL_COLORS } from './ink-reader.js';
  * show({ host, rect, current, onColor(color), onNote(), onCopy(), onRemove?() }) → close()
  * rect is a DOMRect in viewport coordinates; host is the positioned container.
  */
-export function showSelBar({ host, rect, current, onColor, onNote, onCopy, onRemove }) {
+export function showSelBar({ host, rect, current, onColor, onNote, onCopy, onRemove, onDefine }) {
   const hb = host.getBoundingClientRect();
   const bar = h('div', { class: 'sel-bar', role: 'toolbar', 'aria-label': 'Selection' },
     ...Object.entries(HL_COLORS).map(([name, c]) => h('button', { 'aria-label': 'Highlight ' + name, onclick: () => onColor(name) }, h('span', { class: 'dot' + (current === name ? ' on' : ''), style: { '--c': c } }))),
     h('span', { class: 'sel-sep' }),
+    onDefine ? h('button', { 'aria-label': 'Define word', onclick: onDefine }, 'Define') : null,
     onNote ? h('button', { 'aria-label': 'Add note', onclick: onNote }, icon('note', 18)) : null,
     h('button', { 'aria-label': 'Copy', onclick: onCopy }, 'Copy'),
     onRemove ? h('button', { 'aria-label': 'Remove highlight', onclick: onRemove }, icon('trash', 18)) : null);
