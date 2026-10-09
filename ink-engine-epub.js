@@ -33,7 +33,8 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   const nx = rtlBook ? -1 : 1;                       // screen direction of "next" (+1 = to the right)
   let bookPrefs = book.readingPrefs || null;
   const R = () => settings.effectiveReading(bookPrefs);
-  const flowMode = () => (R().flow === 'scroll' ? 'scroll' : 'paged');
+  const chapterMode = () => R().flow === 'chapter';   // one chapter at a time: scroll vertically, swipe sideways between chapters
+  const flowMode = () => (R().flow === 'scroll' || R().flow === 'chapter' ? 'scroll' : 'paged');
   let destroyed = false;
   const setBookPref = async (key, value) => {
     bookPrefs = { ...(bookPrefs || {}), [key]: value };
@@ -214,6 +215,18 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     // First TOC entry that lands on this section
     const first = tocFlat.find((t) => t.s === s);
     return first?.label || '';
+  }
+
+  /** Chapter opener element for section s (or null). Restyles the book's own heading when it already carries the title. */
+  function openerFor(sec, s) {
+    const label = chapterHeadLabel(s, 0);
+    if (!label) return null;
+    const norm = (t) => (t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const ownH = sec.parts[0].el.querySelector('h1,h2,h3');
+    const a = norm(ownH?.textContent), b = norm(label);
+    const dup = !!(ownH && a && (a === b || b.includes(a) || a.includes(b)));
+    if (dup) ownH.classList.add('ep-open-h');
+    return h('div', { class: dup ? 'ep-chap-head orn' : 'ep-chap-head', 'aria-label': 'Chapter' }, dup ? null : h('div', { class: 'ep-chap-title' }, label));
   }
 
   async function makeUnit(s, p) {
@@ -564,19 +577,53 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     body.style.width = geo.W + 'px';
     if (sec.css) body.append(h('style', null, sec.css));
     // Visual chapter break before every section after the first — clean Apple Books–style separation
-    if (s > 0) {
+    if (chapterMode()) {
+      const op = openerFor(sec, s); if (op) body.append(op);
+    } else if (s > 0) {
       const label = chapterLabelForSection(s);
       const br = h('div', { class: 'ep-chap-break', 'aria-hidden': label ? 'false' : 'true' },
         label ? h('div', { class: 'ep-chap-title' }, label) : null);
       body.append(br);
     }
     sec.parts.forEach((p) => body.append(p.el));
+    if (chapterMode()) body.append(chapterFoot(s));
     sec.parts.forEach((p) => renderMarks(sec, p));
     if (where === 'start') { const h0 = scroller.scrollHeight; flowEl.prepend(body); scroller.scrollTop += scroller.scrollHeight - h0; }
     else flowEl.append(body);
     secBodies.set(s, body);
     body.addEventListener('load', () => scheduleScrollRemeasure(), true);
     return body;
+  }
+  function chapterFoot(s) {
+    const last = s >= spine.length - 1;
+    const nextLabel = last ? '' : (chapterLabelForSection(s + 1) || `Chapter ${s + 2}`);
+    return h('div', { class: 'ep-chap-foot' },
+      last ? h('div', { class: 'ep-foot-end' }, 'The end')
+        : h('button', { class: 'ep-foot-next', onclick: () => { api.interaction(); changeChapter(1); } },
+          h('span', { class: 'k' }, 'Next chapter'), h('span', { class: 'n' }, nextLabel), h('span', { class: 'hint' }, 'or swipe left →')));
+  }
+  let chBusy = false;
+  async function changeChapter(dir) {
+    if (!chapterMode() || chBusy || !scroller || !lastPos) return false;
+    const ns = lastPos.s + dir;
+    if (ns < 0 || ns >= spine.length) {
+      scroller.style.transition = 'transform .22s var(--ease, ease)'; scroller.style.transform = 'translate3d(0,0,0)';
+      return false;
+    }
+    chBusy = true;
+    const W = geo.VW || root.clientWidth || 360, out = -dir * nx * W, ms = motionOK() ? 170 : 0;
+    try {
+      scroller.style.transition = ms ? `transform ${ms}ms ease-in, opacity ${ms}ms` : 'none';
+      scroller.style.transform = `translate3d(${out * 0.5}px,0,0)`; scroller.style.opacity = '0';
+      if (ms) await new Promise((r) => setTimeout(r, ms));
+      await scrollShow({ s: ns, f: 0, a: 0 });
+      scroller.style.transition = 'none'; scroller.style.transform = `translate3d(${-out * 0.5}px,0,0)`;
+      void scroller.offsetWidth;
+      scroller.style.transition = ms ? `transform ${ms + 60}ms cubic-bezier(.22,.8,.2,1), opacity ${ms}ms` : 'none';
+      scroller.style.transform = 'translate3d(0,0,0)'; scroller.style.opacity = '1';
+      report(true);
+    } finally { chBusy = false; }
+    return true;
   }
   const scheduleScrollRemeasure = debounce(() => { if (!destroyed && scroller) report(false); }, 160);
 
@@ -595,7 +642,8 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     body.classList.add('measure');
     let rect = null;
     if (t.id) rect = findById(sec, t.id)?.el?.getBoundingClientRect() || null;
-    if (!rect && (t.a != null || (t.f ?? 0) > 0)) rect = rectOfOffset(sec, targetOffset(sec, t));
+    const atStart = !t.id && !(t.a > 0) && !(t.f > 0);
+    if (!rect && !(chapterMode() && atStart) && (t.a != null || (t.f ?? 0) > 0)) rect = rectOfOffset(sec, targetOffset(sec, t));
     if (rect) scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - geo.top + 4;
     else scroller.scrollTop = 0;
     requestAnimationFrame(() => body.classList.remove('measure'));
@@ -615,6 +663,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     if (scrollBusy || destroyed || !scroller) return;
     scrollBusy = true;
     try {
+      if (chapterMode()) { evict((lastPos?.s ?? 0) - 2, (lastPos?.s ?? 0) + 2); return; }
       const vh = scroller.clientHeight;
       const keys = [...secBodies.keys()].sort((a, b) => a - b);
       if (!keys.length) return;
@@ -674,6 +723,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       view.style.touchAction = 'auto';
       scroller = h('div', { class: 'ep-scroll' });
       scroller.style.overflowAnchor = 'none';
+      scroller.classList.toggle('chapter', chapterMode());
       // Keep text clear of the HUD labels and home indicator
       scroller.style.paddingTop = Math.max(28, geo.top) + 'px';
       scroller.style.paddingBottom = Math.max(48, geo.sb + 56) + 'px';
@@ -769,7 +819,12 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       if (Math.abs(dx) > 10 || Math.abs(dy) > 10) ptr.moved = true;
       // Stronger horizontal bias so vertical scroll / accidental diagonal never turns pages
       const horizontalEnough = Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.8;
-      if (flowMode() === 'paged' && ptr.type !== 'mouse' && !busy && !ptr.sel && horizontalEnough && !hasSelection()) {
+      if (chapterMode() && ptr.type !== 'mouse' && !chBusy && !ptr.sel && horizontalEnough && !hasSelection()) {
+        ptr.drag = 'ch';
+        try { view.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        getSelection()?.removeAllRanges();
+        if (scroller) { scroller.style.transition = 'none'; scroller.style.overflowY = 'hidden'; }
+      } else if (flowMode() === 'paged' && ptr.type !== 'mouse' && !busy && !ptr.sel && horizontalEnough && !hasSelection()) {
         ptr.drag = true;
         try { view.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         getSelection()?.removeAllRanges();
@@ -779,7 +834,10 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     if (ptr.drag) {
       const now = performance.now();
       if (now - ptr.lt > 8) { ptr.vx = (e.clientX - ptr.lx) / (now - ptr.lt); ptr.lx = e.clientX; ptr.lt = now; }
-      dragMove(clamp(dx, -geo.VW, geo.VW));
+      if (ptr.drag === 'ch') {
+        const fwd = dx * fwdSign > 0, can = fwd ? lastPos.s < spine.length - 1 : lastPos.s > 0;
+        if (scroller) scroller.style.transform = `translate3d(${(can ? dx * 0.55 : dx * 0.15)}px,0,0)`;
+      } else dragMove(clamp(dx, -geo.VW, geo.VW));
     }
   });
   const endPtr = (e, cancelled) => {
@@ -787,6 +845,14 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
     const p = ptr; ptr = null;
     if (p.drag) {
       try { view.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      if (p.drag === 'ch') {
+        if (scroller) scroller.style.overflowY = '';
+        const dx = e.clientX - p.x;
+        const commit = !cancelled && (Math.abs(dx) > geo.VW * 0.22 || (Math.abs(p.vx) > 0.5 && Math.abs(dx) > 28));
+        if (commit) changeChapter(dx * fwdSign > 0 ? 1 : -1);
+        else if (scroller) { scroller.style.transition = 'transform .2s var(--ease, ease)'; scroller.style.transform = 'translate3d(0,0,0)'; }
+        return;
+      }
       cancelled ? snapBack() : dragEnd(e.clientX - p.x, p.vx);
       return;
     }
@@ -973,7 +1039,7 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       columnWidth: slider({ label: 'Text width', min: 360, max: 1000, step: 20, value: R().columnWidth, format: (v) => v + ' px', onInput: (v) => Sg('columnWidth', v) }),
     };
     const alignSeg = segmented([{ value: 'left', label: 'Left' }, { value: 'justify', label: 'Justified' }], R().align, (v) => Sg('align', v));
-    const flowSeg = segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], R().flow, (v) => Sg('flow', v));
+    const flowSeg = segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'chapter', label: 'Chapter', icon: 'scroll' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], R().flow, (v) => Sg('flow', v));
     const themeSw = swatches(themeItems, R().theme, (v) => { Sg('theme', v); custom.style.display = v === 'custom' ? 'grid' : 'none'; applyVars(); });
     // Advanced section is collapsed by default so Theme / Font / Size stay front and center
     const advanced = h('details', { class: 'rd-set-advanced' },
