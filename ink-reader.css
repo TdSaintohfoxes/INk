@@ -280,9 +280,12 @@
 .pd-text ::selection { background: color-mix(in srgb, var(--accent) 38%, transparent); }
 .pd-hl { position: absolute; inset: 0; pointer-events: none; z-index: 1; mix-blend-mode: multiply; }
 .pd-hl i { position: absolute; background: var(--hl); opacity: .45; border-radius: 2px; }
-.pd.dark .pd-page canvas { filter: invert(.92) hue-rotate(180deg); }
-.pd.dark .pd-hl { mix-blend-mode: screen; }
-.pd.sepia .pd-page canvas { filter: sepia(.35) saturate(.9) brightness(.97); }
+/* Night recolour for text PDFs only — never invert scanned / comic pages */
+.pd.dark:not(.scanned) .pd-page canvas { filter: invert(.92) hue-rotate(180deg); }
+.pd.dark:not(.scanned) .pd-hl { mix-blend-mode: screen; }
+.pd.sepia:not(.scanned) .pd-page canvas { filter: sepia(.35) saturate(.9) brightness(.97); }
+.pd.scanned .pd-page canvas { filter: none; }
+.pd.scanned .pd-page { background: #fff; }
 .pd-spread { display: flex; justify-content: center; gap: 4px; margin: 0 auto 10px; }
 .pd-spread .pd-page { margin: 0; }
 .pd-paged { display: grid; place-items: center; min-width: 100%; min-height: 100%; padding: 8px; }
