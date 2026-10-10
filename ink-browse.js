@@ -2,8 +2,8 @@
 import { h, icon } from './ink-util.js';
 import * as lib from './ink-lib.js';
 import * as settings from './ink-settings.js';
-import { bookCard, seriesCard, listItem, coverEl, collectionOptions, openBook } from './ink-cards.js';
-import { openSheet, actionSheet, promptDialog, confirmDialog, segmented } from './ink-ui.js';
+import { bookCard, seriesCard, listItem, coverEl, collectionOptions, openBook, selection } from './ink-cards.js';
+import { openSheet, actionSheet, promptDialog, confirmDialog, segmented, toast } from './ink-ui.js';
 import * as db from './ink-db.js';
 
 const TITLES = { all: 'Library', epub: 'Books', comic: 'Comics', pdf: 'PDFs' };
@@ -21,6 +21,9 @@ export function renderBrowse(root, ctx, params) {
   const inner = h('div', { class: 'view-inner view-in' });
   root.replaceChildren(inner);
 
+  let author = params.get('a') || '';
+  let selecting = false;
+  const sel = new Set();
   const base = () => collection ? lib.collectionBooks(collection.id) : smart ? smart.get() : lib.books();
   const content = h('div');
   const count = h('span', { class: 'count-line' });
@@ -34,6 +37,84 @@ export function renderBrowse(root, ctx, params) {
   viewToggle.addEventListener('viewchange', () => draw());
   const sortBtn = h('button', { class: 'chip', 'aria-label': 'Sort', onclick: () => sortSheet(() => { sortBtn.lastChild.textContent = sortLabel(); draw(); }) }, icon('swap', 15), h('span', null, sortLabel()));
 
+  const authorBtn = h('button', { class: 'chip', 'aria-label': 'Filter by author', onclick: () => authorSheet() }, icon('user', 15), h('span', null, 'Author'));
+  const drawAuthor = () => {
+    authorBtn.classList.toggle('on', !!author);
+    const a = author && lib.authors().find((x) => x.key === author);
+    authorBtn.lastChild.textContent = a ? a.name : 'Author';
+  };
+  const authorSheet = () => openSheet({
+    title: 'Author', size: 's', className: 'actions',
+    body: (api) => {
+      const list = lib.authors(lib.applyFilter(base(), filter));
+      return h('div', { class: 'action-list' },
+        author ? h('button', { class: 'action', onclick: () => { author = ''; api.close(); drawAuthor(); draw(); } }, h('span', { class: 'action-label' }, 'All authors')) : null,
+        list.length ? list.map((a) => h('button', { class: 'action', onclick: () => { author = a.key; api.close(); drawAuthor(); draw(); } },
+          h('span', { class: 'action-label' }, a.name), h('span', { class: 'action-hint' }, a.n + (a.n === 1 ? ' book' : ' books')))) : h('p', { class: 'row-hint' }, 'No authors in this list.'));
+    },
+  });
+  const selBtn = h('button', { class: 'chip', id: 'sel-toggle', 'aria-label': 'Select books', onclick: () => setSelecting(!selecting) }, icon('check', 15), h('span', null, 'Select'));
+
+  /* ---- multi-select ---- */
+  const bar = h('div', { class: 'selbar', role: 'toolbar', 'aria-label': 'Selected books' });
+  const toggleIds = (ids) => {
+    ids = [].concat(ids);
+    if (!selecting) setSelecting(true);
+    const all = ids.every((i) => sel.has(i));
+    ids.forEach((i) => (all ? sel.delete(i) : sel.add(i)));
+    paintSel();
+  };
+  function setSelecting(on) {
+    selecting = on; if (!on) sel.clear();
+    selection.hook = on ? toggleIds : null;
+    selBtn.classList.toggle('on', on); selBtn.lastChild.textContent = on ? 'Done' : 'Select';
+    inner.classList.toggle('selecting', on);
+    paintSel();
+  }
+  const idsOf = (el) => (el.dataset.ids ? el.dataset.ids.split(',') : el.dataset.id ? [el.dataset.id] : []);
+  function paintSel() {
+    content.querySelectorAll('[data-id],[data-ids]').forEach((el) => el.classList.toggle('sel', idsOf(el).length > 0 && idsOf(el).every((i) => sel.has(i))));
+    bar.classList.toggle('show', selecting);
+    drawBar();
+  }
+  content.addEventListener('click', (e) => {
+    if (!selecting) return;
+    const el = e.target.closest('[data-id],[data-ids]');
+    if (!el) return;
+    e.preventDefault(); e.stopPropagation(); toggleIds(idsOf(el));
+  }, true);
+  const selBooks = () => [...sel];
+  const act = (label, ic, fn, cls = '') => h('button', { class: 'selbar-btn ' + cls, 'aria-label': label, disabled: !sel.size, onclick: fn }, icon(ic, 20), h('span', null, label));
+  function drawBar() {
+    const n = sel.size;
+    bar.replaceChildren(
+      h('div', { class: 'selbar-count' }, h('b', null, n), h('span', null, n === 1 ? 'selected' : 'selected'),
+        h('button', { class: 'link-btn', onclick: () => { const ids = visibleIds(); if (ids.every((i) => sel.has(i))) sel.clear(); else ids.forEach((i) => sel.add(i)); paintSel(); } }, 'All')),
+      h('div', { class: 'selbar-acts' },
+        act('Favorite', 'heart', async () => { await lib.bulk(selBooks(), 'fav'); toast(n + ' added to favorites'); setSelecting(false); }),
+        act('Collection', 'collection', () => bulkCollectionSheet()),
+        act('Finished', 'check', async () => { await lib.bulk(selBooks(), 'finished'); toast(n + ' marked finished'); setSelecting(false); }),
+        act('Unread', 'close', async () => { await lib.bulk(selBooks(), 'unread'); toast(n + ' marked unread'); setSelecting(false); }),
+        act('Remove', 'trash', async () => {
+          if (!await confirmDialog({ title: `Remove ${n} ${n === 1 ? 'book' : 'books'}?`, message: 'They will be removed from INK along with their bookmarks and highlights. The original files on your device are not touched.', confirmLabel: 'Remove', danger: true })) return;
+          await lib.bulk(selBooks(), 'remove'); toast(n + ' removed'); setSelecting(false);
+        }, 'danger')));
+  }
+  const visibleIds = () => [...content.querySelectorAll('[data-id],[data-ids]')].flatMap(idsOf);
+  function bulkCollectionSheet() {
+    const ids = selBooks();
+    openSheet({ title: 'Add to collection', body: (api) => {
+      const list = h('div');
+      for (const c of lib.collections()) list.append(h('button', { class: 'check-row', onclick: async () => { await lib.bulkCollection(ids, c.id, true); toast(`Added ${ids.length} to ${c.name}`); api.close(); setSelecting(false); } }, h('span', { class: 'box' }, icon('plus', 14)), h('span', null, c.name)));
+      const input = h('input', { class: 'input', placeholder: 'New collection…', 'aria-label': 'New collection name' });
+      const add = async () => { const name = input.value.trim(); if (!name) return; const c = await db.createCollection(name); await lib.bulkCollection(ids, c.id, true); toast(`Added ${ids.length} to ${name}`); api.close(); setSelecting(false); };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+      return h('div', null, list, h('div', { style: { display: 'flex', gap: '8px', marginTop: '14px' } }, input, h('button', { class: 'btn primary', onclick: add }, 'Create')));
+    } });
+  }
+  const offLib = () => { selection.hook = null; };
+  addEventListener('hashchange', offLib, { once: true });
+
   inner.append(
     h('header', { class: 'top', style: { marginBottom: '0' } },
       h('button', { class: 'crumb', onclick: () => history.length > 1 && !collection ? history.back() : (location.hash = '#/') }, icon('chevL', 18), 'Library'),
@@ -42,15 +123,16 @@ export function renderBrowse(root, ctx, params) {
         h('button', { class: 'icon-btn', 'aria-label': 'Import books', onclick: ctx.importMenu }, icon('plus', 24)))),
     h('h1', { class: 'page-title', style: { margin: '2px 0 14px' } }, title),
     chipRow,
-    h('div', { class: 'toolbar' }, count, h('span', { class: 'spacer' }), sortBtn, viewToggle),
-    content);
+    h('div', { class: 'toolbar' }, count, h('span', { class: 'spacer' }), authorBtn, selBtn, sortBtn, viewToggle),
+    content, bar);
 
-  drawChips();
+  drawChips(); drawAuthor();
   draw();
 
   function draw() {
     const S = settings.get('library');
     let list = lib.applyFilter(base(), filter);
+    if (author) list = lib.byAuthor(list, author);
     list = lib.sortBooks(list, S.sort, S.sortDir);
     count.textContent = list.length + (list.length === 1 ? ' item' : ' items');
     content.replaceChildren();
@@ -67,12 +149,13 @@ export function renderBrowse(root, ctx, params) {
     } else {
       content.append(h('div', { class: 'grid', 'data-size': S.gridSize }, grouped.map((g) => g.type === 'book' ? bookCard(g.book) : seriesCard(g))));
     }
+    if (selecting) { const ids = new Set(visibleIds()); [...sel].forEach((i) => !ids.has(i) && sel.delete(i)); paintSel(); }
   }
 }
 
 function seriesListItem(g) {
   const first = g.books[0];
-  return h('button', { class: 'li', onclick: () => { location.hash = '#/series/' + g.key; } },
+  return h('button', { class: 'li', dataset: { ids: g.books.map((b) => b.id).join(',') }, onclick: () => { location.hash = '#/series/' + g.key; } },
     h('div', { class: 'cover' }, lib.coverImg(first.id)),
     h('div', { class: 'li-text' }, h('div', { class: 'li-title' }, g.name), h('div', { class: 'li-sub' }, g.books.length + ' volumes')),
     h('span', { class: 'li-pct' }, icon('chevR', 16)));

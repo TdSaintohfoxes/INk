@@ -93,6 +93,52 @@ export function collectionBooks(cid) {
 }
 export const collectionsOf = (bid) => COLLECTIONS.filter((c) => LINKS.some((l) => l.collectionId === c.id && l.bookId === bid));
 
+/* ---------------- authors, bulk actions, duplicates ---------------- */
+const authorKey = (a) => String(a || '').trim().toLowerCase();
+/** [{key,name,n}] sorted by name — books without an author are left out */
+export function authors(list = BOOKS) {
+  const m = new Map();
+  for (const b of list) {
+    const k = authorKey(b.author); if (!k) continue;
+    const e = m.get(k) || { key: k, name: b.author.trim(), n: 0 }; e.n++; m.set(k, e);
+  }
+  return [...m.values()].sort((a, b) => natCompare(a.name, b.name));
+}
+export const byAuthor = (list, key) => list.filter((b) => authorKey(b.author) === key);
+export async function bulk(ids, op) {
+  for (const id of ids) {
+    if (op === 'fav') await db.patchBook(id, { favorite: true }, { silent: true });
+    else if (op === 'unfav') await db.patchBook(id, { favorite: false }, { silent: true });
+    else if (op === 'finished') await db.patchBook(id, { progress: 1, dateFinished: Date.now(), lastOpened: Date.now() }, { silent: true });
+    else if (op === 'unread') await db.patchBook(id, { progress: 0, dateFinished: 0, currentLocation: null, lastLabel: '' }, { silent: true });
+    else if (op === 'remove') { revokeCover(id); await db.removeBook(id); }
+  }
+  await load(); bus.emit('library');
+}
+export async function bulkCollection(ids, cid, on) {
+  for (const id of ids) await db.setMembership(cid, id, on);
+  await load(); bus.emit('library');
+}
+const normTitle = (t) => String(t || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+/** groups of books that look like the same thing: same size+format, or same title+author+format */
+export function findDuplicates() {
+  const groups = new Map();
+  for (const b of BOOKS) {
+    for (const k of [`z:${b.format}:${b.size}`, `t:${b.format}:${normTitle(b.title)}:${authorKey(b.author)}`]) {
+      if (k.startsWith('z:') && !b.size) continue;
+      (groups.get(k) || groups.set(k, []).get(k)).push(b);
+    }
+  }
+  const seen = new Set(), out = [];
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const key = g.map((b) => b.id).sort().join();
+    if (seen.has(key)) continue; seen.add(key);
+    out.push([...g].sort((a, b) => (b.progress - a.progress) || (a.dateAdded - b.dateAdded)));
+  }
+  return out;
+}
+
 export const FILTERS = [
   ['all', 'All'], ['epub', 'EPUB'], ['pdf', 'PDF'], ['comic', 'Comics'], ['unread', 'Unread'], ['reading', 'Reading'], ['finished', 'Finished'], ['favorites', 'Favorites'],
 ];

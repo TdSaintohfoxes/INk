@@ -23,6 +23,7 @@ import * as lib from './ink-lib.js';
 import * as settings from './ink-settings.js';
 import * as stats from './ink-stats.js';
 import { mountNight } from './ink-night.js';
+import { mountRuler } from './ink-ruler.js';
 import { openSheet, toast, errorView, segmented, promptDialog, confirmDialog, closeAllSheets, topSheet } from './ink-ui.js';
 
 const LOADERS = {
@@ -67,6 +68,8 @@ export async function mountReader(root, book, { exit }) {
   root.replaceChildren(rd);
   const night = mountNight(rd, { getCtl: () => ctl, exit: () => exit(), toast });
   unsubs.push(() => night.destroy());
+  const ruler = mountRuler(rd);
+  unsubs.push(() => ruler.destroy());
   unsubs.push(stats.onGoal(() => toast('Daily goal reached. Lovely reading.')));
 
   function openMore() {
@@ -76,6 +79,7 @@ export async function mountReader(root, book, { exit }) {
       ctl?.search ? { label: 'Search', icon: 'search', hint: 'Find text in this book', onClick: () => openSearch() } : null,
       { label: 'Themes & settings', icon: 'type', hint: 'Font, theme, layout', onClick: () => openSettings() },
       { label: 'Night & sleep timer', icon: 'moon', hint: 'Warm light, dimming, timer', onClick: () => night.open() },
+      { label: 'Reading ruler', icon: 'ruler', hint: ruler.active() ? 'On — tap to turn off' : 'Focus on a few lines', onClick: () => { ruler.toggle(); toast(ruler.active() ? 'Ruler on — drag the handle to move it' : 'Ruler off'); } },
       { label: 'Bookmarks & highlights', icon: 'bookmark', hint: 'Your marks', onClick: () => openContents('marks') },
       book.format === 'epub' ? { label: 'Book info', icon: 'info', hint: 'Title, author, publisher', onClick: () => openContents('info') } : null,
     ].filter(Boolean);

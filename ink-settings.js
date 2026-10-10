@@ -19,10 +19,11 @@ export const DEFAULTS = {
     direction: 'ltr',         // default direction for comics
     warm: 0, dim: 0,          // night reading overlays (%)
     nightAuto: false, nightFrom: '21:00', nightTo: '06:00',
+    ruler: false, rulerSize: 1,   // reading ruler on/off, height step
     dailyGoal: 0,             // minutes per day, 0 = off
   },
   library: { view: 'grid', sort: 'added', sortDir: 'desc', gridSize: 'm', group: true, filter: 'all', showProgress: true },
-  pdf: { mode: 'continuous', fit: 'width', trim: false },
+  pdf: { mode: 'continuous', fit: 'width', trim: false, brightness: 1, contrast: 1, autoSpeed: 4 },
   comic: { mode: 'auto', fit: 'auto', brightness: 1, contrast: 1, sharpen: false, trim: false, firstPageAlone: true },
 };
 

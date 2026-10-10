@@ -7,7 +7,7 @@ import { h, icon, clamp, debounce, rafThrottle } from './ink-util.js';
 import * as settings from './ink-settings.js';
 import * as db from './ink-db.js';
 import { loadPdfjs, openPdf, isPasswordError } from './ink-pdfjs.js';
-import { segmented, slider, toggleRow, field, group, swatches, toast } from './ink-ui.js';
+import { segmented, slider, toggleRow, field, group, swatches, toast, closeAllSheets } from './ink-ui.js';
 import { showSelBar } from './ink-selbar.js';
 import { define, isWord } from './ink-dict.js';
 import { hlColor } from './ink-reader.js';
@@ -562,6 +562,29 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
   else await showSpread(start.page || 0);
   if (gotoQuery && start.page != null) pendingFind = { page: start.page, q: gotoQuery };
 
+  /* ---------- page adjustments & auto-scroll ---------- */
+  const applyAdj = () => root.style.setProperty('--pd-adj', `brightness(${P().brightness ?? 1}) contrast(${P().contrast ?? 1})`);
+  applyAdj();
+  let auto = false, autoRaf = 0, autoLast = 0, autoAcc = 0;
+  const autoStop = () => { auto = false; cancelAnimationFrame(autoRaf); autoRaf = 0; autoSync?.(false); };
+  let autoSync = null;
+  function autoTick(t) {
+    if (!auto || destroyed) return;
+    const dt = autoLast ? Math.min(64, t - autoLast) : 16; autoLast = t;
+    autoAcc += ((P().autoSpeed || 4) * 9) * dt / 1000;          // px per second, fractional kept
+    const whole = Math.floor(autoAcc);
+    if (whole >= 1) {
+      const before = scroller.scrollTop; scroller.scrollTop = before + whole; autoAcc -= whole;
+      if (scroller.scrollTop === before) { autoStop(); toast('End of document'); return; }
+    }
+    autoRaf = requestAnimationFrame(autoTick);
+  }
+  function autoStart() {
+    if (mode !== 'continuous') { toast('Auto-scroll works in Scroll layout'); return false; }
+    auto = true; autoLast = 0; autoAcc = 0; api.hideChrome?.(); autoRaf = requestAnimationFrame(autoTick); return true;
+  }
+  for (const ev of ['touchstart', 'wheel', 'pointerdown']) scroller.addEventListener(ev, () => { if (auto) autoStop(); }, { passive: true });
+
   /* ---------- controller ---------- */
   const unsubTheme = settings.on((k) => { if (k === 'reading.theme' || k === 'app.theme' || k === 'app.system' || k === 'reading.customBg') applyTheme(); });
 
@@ -602,14 +625,23 @@ export async function open({ book, blob, host, api, saved, gotoQuery }) {
       const fitSeg = segmented([{ value: 'width', label: 'Fit width' }, { value: 'page', label: 'Fit page' }], P().fit, (v) => { settings.set('pdf.fit', v); zoom = 1; rebuild(); });
       const zoomCtl = slider({ label: 'Zoom', min: 50, max: 400, step: 10, value: Math.round(zoom * 100), format: (v) => v + '%', onInput: debounce((v) => setZoom(v / 100), 120) });
       const items = [{ value: 'auto', label: 'Auto', bg: 'linear-gradient(135deg,#f8f6f0 50%,#1e1e21 50%)', fg: '#888' }].concat(Object.entries(settings.READING_THEMES).map(([value, t]) => ({ value, label: t.name, bg: t.bg, fg: t.fg })));
+      const goIn = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 1, max: N, placeholder: `1–${N}`, 'aria-label': 'Go to page', style: { maxWidth: '110px' } });
+      const go = () => { const n = Math.round(+goIn.value); if (n >= 1 && n <= N) { goPage(n - 1); closeAllSheets(); } else toast(`Enter a page from 1 to ${N}`); };
+      goIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      const autoRow = toggleRow({ label: 'Auto-scroll', hint: 'Hands-free reading in Scroll layout. Touch the page to pause.', value: auto, onChange: (v) => { if (v) { if (!autoStart()) autoSync?.(false); } else autoStop(); } });
+      autoSync = (v) => autoRow.set(v);
       wrap.append(
+        group('Go to', h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, goIn, h('button', { class: 'btn ghost', onclick: go }, 'Go'), h('span', { class: 'row-hint' }, `Page ${cur + 1} of ${N}`))),
         group('Layout', field('Page layout', modeSeg), field('Fit', fitSeg), zoomCtl,
           toggleRow({ label: 'Trim margins', hint: 'Crops the white borders around text', value: P().trim, onChange: async (v) => { settings.set('pdf.trim', v); await computeTrim(); rebuild(); } })),
-        group('Appearance', field('Page colour', swatches(items, settings.get('reading.theme') === 'custom' ? 'auto' : settings.get('reading.theme'), (v) => settings.set('reading.theme', v)), 'Dark and sepia recolour the pages for comfortable night reading.')));
+        group('Reading', autoRow, slider({ label: 'Auto-scroll speed', min: 1, max: 10, step: 1, value: P().autoSpeed || 4, format: (v) => v + '×', onInput: (v) => settings.set('pdf.autoSpeed', v) })),
+        group('Appearance', slider({ label: 'Brightness', min: 0.6, max: 1.4, step: 0.05, value: P().brightness ?? 1, format: (v) => Math.round(v * 100) + '%', onInput: (v) => { settings.set('pdf.brightness', v); applyAdj(); } }),
+          slider({ label: 'Contrast', min: 0.7, max: 1.8, step: 0.05, value: P().contrast ?? 1, format: (v) => Math.round(v * 100) + '%', onInput: (v) => { settings.set('pdf.contrast', v); applyAdj(); } }),
+          field('Page colour', swatches(items, settings.get('reading.theme') === 'custom' ? 'auto' : settings.get('reading.theme'), (v) => settings.set('reading.theme', v)), 'Dark and sepia recolour the pages for comfortable night reading.')));
       return wrap;
     },
     destroy() {
-      destroyed = true;
+      destroyed = true; autoStop();
       removeEventListener('keydown', onKey);
       document.removeEventListener('selectionchange', onSel);
       unsubTheme?.(); ro.disconnect(); closeBar?.();

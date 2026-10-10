@@ -2,8 +2,11 @@
 import { h, icon, pct } from './ink-util.js';
 import * as lib from './ink-lib.js';
 import * as db from './ink-db.js';
+import * as settings from './ink-settings.js';
 import { openSheet, actionSheet, confirmDialog, promptDialog, toast, field } from './ink-ui.js';
 
+/* multi-select hook: browse sets it while selecting; long-press then toggles instead of opening actions */
+export const selection = { hook: null };
 export const openBook = (id) => { location.hash = '#/read/' + id; };
 
 export function longPress(el, fn, ms = 520) {
@@ -25,7 +28,7 @@ export function coverEl(b, { showProgress = true } = {}) {
   const st = lib.status(b);
   if (b.favorite) c.append(h('span', { class: 'fav' }, icon('heartOn', 16)));
   if (st === 'finished') c.append(h('span', { class: 'done', title: 'Finished' }, icon('check', 13)));
-  else if (st === 'reading' && showProgress) c.append(h('div', { class: 'bar' }, h('i', { style: { width: pct(b.progress) + '%' } })));
+  else if (st === 'reading' && showProgress && settings.get('library.showProgress') !== false) c.append(h('div', { class: 'bar' }, h('i', { style: { width: pct(b.progress) + '%' } })));
   return c;
 }
 
@@ -33,9 +36,9 @@ export function bookCard(b, { sub } = {}) {
   const label = b.title + (b.author ? ' — ' + b.author : '');
   const btn = h('button', { class: 'card-cover-btn', 'aria-label': 'Open ' + label, onclick: () => openBook(b.id) }, coverEl(b));
   const more = h('button', { class: 'card-more', 'aria-label': 'Options for ' + b.title, onclick: (e) => { e.stopPropagation(); bookActions(b); } }, icon('more', 18));
-  longPress(btn, () => bookActions(b));
+  longPress(btn, () => (selection.hook ? selection.hook(b.id) : bookActions(b)));
   const subtitle = sub ?? (lib.volumeLabel(b) || b.author || lib.formatName(b));
-  return h('article', { class: 'card', dataset: { id: b.id } }, btn,
+  return h('article', { class: 'card', dataset: { id: b.id } }, btn, h('span', { class: 'sel-mark', 'aria-hidden': 'true' }, icon('check', 14)),
     h('div', { class: 'card-meta' }, h('div', { class: 'card-text' }, h('div', { class: 'card-title' }, b.title), h('div', { class: 'card-sub' }, subtitle)), more));
 }
 
@@ -44,7 +47,8 @@ export function seriesCard(g) {
   const read = g.books.filter((b) => lib.status(b) === 'finished').length;
   const cover = h('div', { class: 'cover-wrap stack' }, h('div', { class: 'cover' }, lib.coverImg(first.id), h('span', { class: 'badge-count' }, g.books.length)));
   const btn = h('button', { class: 'card-cover-btn', 'aria-label': `Series ${g.name}, ${g.books.length} volumes`, onclick: () => { location.hash = '#/series/' + g.key; } }, cover);
-  return h('article', { class: 'card' }, btn,
+  longPress(btn, () => selection.hook?.(g.books.map((b) => b.id)));
+  return h('article', { class: 'card', dataset: { ids: g.books.map((b) => b.id).join(',') } }, btn, h('span', { class: 'sel-mark', 'aria-hidden': 'true' }, icon('check', 14)),
     h('div', { class: 'card-meta' }, h('div', { class: 'card-text' }, h('div', { class: 'card-title' }, g.name), h('div', { class: 'card-sub' }, `${g.books.length} volumes${read ? ' · ' + read + ' read' : ''}`))));
 }
 
@@ -53,8 +57,8 @@ export function listItem(b) {
     coverEl(b, { showProgress: false }),
     h('div', { class: 'li-text' }, h('div', { class: 'li-title' }, b.title), h('div', { class: 'li-sub' }, [b.author, lib.volumeLabel(b), lib.formatName(b)].filter(Boolean).join(' · '))),
     h('span', { class: 'li-pct' }, lib.status(b) === 'unread' ? '' : lib.status(b) === 'finished' ? '100%' : pct(b.progress) + '%'));
-  longPress(btn, () => bookActions(b));
-  return h('div', { class: 'li-wrap', style: { display: 'flex', alignItems: 'center' } }, btn,
+  longPress(btn, () => (selection.hook ? selection.hook(b.id) : bookActions(b)));
+  return h('div', { class: 'li-wrap', dataset: { id: b.id }, style: { display: 'flex', alignItems: 'center' } }, h('span', { class: 'sel-mark', 'aria-hidden': 'true' }, icon('check', 14)), btn,
     h('button', { class: 'card-more', 'aria-label': 'Options for ' + b.title, onclick: () => bookActions(b) }, icon('more', 18)));
 }
 

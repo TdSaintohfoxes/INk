@@ -175,6 +175,7 @@ function splitParts(body, limit) {
     for (const n of g.nodes) inner.append(n);
     for (const e of el.querySelectorAll('[id]')) if (!ids.has(e.id)) ids.set(e.id, i);
     for (const e of el.querySelectorAll('a[name]')) { const n = e.getAttribute('name'); if (n && !ids.has(n)) ids.set(n, i); }
+    if (g.chars < 40 && el.querySelector('img,svg,image') && !el.querySelector('p,h1,h2,h3,li,table')) el.classList.add('ep-imgpage');   // full-page illustration / fixed-layout page
     parts.push({ el, chars: g.chars, base });
     base += g.chars;
   });

@@ -59,6 +59,8 @@ const ICONS = {
   fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>',
   thumbs: '<rect x="4" y="3.5" width="7" height="9" rx="1"/><rect x="13" y="3.5" width="7" height="9" rx="1"/><rect x="4" y="14.5" width="7" height="6" rx="1"/><rect x="13" y="14.5" width="7" height="6" rx="1"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-4 3.7-6 7-6s6.2 2 7 6"/>',
+  ruler: '<rect x="3.5" y="9" width="17" height="6" rx="1"/><path d="M7 9v3M10.5 9v2M14 9v3M17.5 9v2"/>',
   trash: '<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
   folder: '<path d="M3.5 6.5h6l2 2.5h9v9.5h-17z"/>',

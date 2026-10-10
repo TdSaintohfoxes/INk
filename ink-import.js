@@ -84,7 +84,8 @@ export async function importFile(file, existing = []) {
   try {
     const kind = await sniffFormat(file);
     if (!kind) return { status: 'failed', error: 'Unsupported file type (INK reads EPUB, PDF, CBZ and CBR).', name: file.name };
-    const dup = existing.find((b) => b.fileName === file.name && b.size === file.size);
+    let dup = existing.find((b) => b.fileName === file.name && b.size === file.size);
+    if (!dup) dup = await findSameContent(file, kind, existing);   // renamed copy of a book we already have
     if (dup) return { status: 'duplicate', book: dup, name: file.name };
 
     let info;
@@ -108,7 +109,7 @@ export async function importFile(file, existing = []) {
       format: kind.format, ext: kind.ext, fileName: file.name, size: file.size,
       hasCover: false, progress: 0, currentLocation: null,
       dateAdded: Date.now(), lastOpened: 0, dateFinished: 0, favorite: false,
-      meta: { ...(info.meta || {}), seriesAuto: auto || null },
+      meta: { ...(info.meta || {}), seriesAuto: auto || null, fp: crypto?.subtle ? await fingerprint(file).catch(() => '') : '' },
     };
 
     let coverBlob = info.cover;
@@ -123,6 +124,27 @@ export async function importFile(file, existing = []) {
     console.error('import failed', file.name, e);
     return { status: 'failed', error: friendlyReason(e), name: file.name };
   }
+}
+
+/** cheap content fingerprint: size + SHA-1 of the first and last 64 KB */
+export async function fingerprint(blob) {
+  const n = 65536;
+  const a = await blob.slice(0, n).arrayBuffer();
+  const z = blob.size > n ? await blob.slice(Math.max(n, blob.size - n)).arrayBuffer() : new ArrayBuffer(0);
+  const buf = new Uint8Array(a.byteLength + z.byteLength); buf.set(new Uint8Array(a)); buf.set(new Uint8Array(z), a.byteLength);
+  const d = await crypto.subtle.digest('SHA-1', buf);
+  return blob.size + ':' + [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+async function findSameContent(file, kind, existing) {
+  const same = existing.filter((b) => b.size === file.size && b.format === kind.format);
+  if (!same.length || !crypto?.subtle) return null;
+  const fp = await fingerprint(file);
+  for (const b of same) {
+    let h = b.meta?.fp;
+    if (!h) { const blob = await db.getFile(b.id); if (!blob) continue; h = await fingerprint(blob); db.patchBook(b.id, { meta: { ...(b.meta || {}), fp: h } }, { silent: true }); }
+    if (h === fp) return b;
+  }
+  return null;
 }
 
 const mimeFor = (k) => (k.format === 'pdf' ? 'application/pdf' : k.format === 'epub' ? 'application/epub+zip' : k.ext === 'cbr' ? 'application/vnd.comicbook-rar' : 'application/vnd.comicbook+zip');

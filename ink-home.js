@@ -38,6 +38,9 @@ export function renderHome(root, ctx) {
   const recent = lib.recentlyAdded(14);
   inner.append(shelfSection('Recently added', recent, { all: '#/browse?s=recent' }));
 
+  const fin = lib.recentlyFinished();
+  if (fin.length) inner.append(shelfSection('Finished', fin.slice(0, 14), { all: '#/browse?s=finished' }));
+
   const counts = { epub: 0, comic: 0, pdf: 0 };
   all.forEach((b) => counts[b.format]++);
   const tile = (label, f, n, ic) => h('button', { class: 'tile', onclick: () => { location.hash = '#/browse?f=' + f; } },

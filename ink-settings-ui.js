@@ -5,6 +5,7 @@ import * as db from './ink-db.js';
 import * as lib from './ink-lib.js';
 import * as stats from './ink-stats.js';
 import * as dict from './ink-dict.js';
+import * as backup from './ink-backup.js';
 import { openSheet, segmented, slider, toggleRow, field, group, swatches, toast, confirmDialog } from './ink-ui.js';
 
 const S = settings;
@@ -24,11 +25,13 @@ export function renderSettings(root, ctx) {
       toggleRow({ label: 'Animations', hint: 'Page and screen transitions', value: S.get('app.animations'), onChange: (v) => S.set('app.animations', v) })),
 
     group('Reading',
+      h('p', { class: 'row-hint', style: { margin: '2px 0 8px' } }, 'Defaults for every book. A book you have adjusted from its own reader menu keeps its own look.'),
       field('Page behavior', segmented([{ value: 'paged', label: 'Pages', icon: 'single' }, { value: 'chapter', label: 'Chapter', icon: 'scroll' }, { value: 'scroll', label: 'Scroll', icon: 'scroll' }], S.get('reading.flow'), (v) => S.set('reading.flow', v)), 'For EPUB. Chapter = scroll within a chapter, swipe sideways between chapters.'),
       field('Default font', segmented([{ value: 'serif', label: 'Serif' }, { value: 'sans', label: 'Sans' }, { value: 'humanist', label: 'Humanist' }, { value: 'mono', label: 'Mono' }], S.get('reading.font'), (v) => S.set('reading.font', v), { wrap: true })),
       slider({ label: 'Default margins', min: 4, max: 80, step: 2, value: S.get('reading.margin'), format: (v) => v + ' px', onInput: (v) => S.set('reading.margin', v) }),
       field('Default reading direction', segmented([{ value: 'ltr', label: 'Left to right' }, { value: 'rtl', label: 'Right to left (manga)' }], S.get('reading.direction'), (v) => S.set('reading.direction', v)), 'Used for comics unless the file says otherwise.'),
       toggleRow({ label: 'Auto-hide controls', hint: 'Controls fade away while you read', value: S.get('reading.autoHide'), onChange: (v) => S.set('reading.autoHide', v) }),
+      toggleRow({ label: 'Reading ruler', hint: 'Dims everything except a few lines you can drag. Also in the ⋯ menu.', value: S.get('reading.ruler'), onChange: (v) => S.set('reading.ruler', v) }),
       toggleRow({ label: 'Tap edges to turn pages', value: S.get('reading.tapNav'), onChange: (v) => S.set('reading.tapNav', v) })),
 
     group('Library',
@@ -38,6 +41,8 @@ export function renderSettings(root, ctx) {
       toggleRow({ label: 'Progress on covers', value: S.get('library.showProgress'), onChange: (v) => S.set('library.showProgress', v) })),
 
     dictionaryGroup(),
+
+    backupGroup(ctx),
 
     storageGroup(ctx),
 
@@ -131,7 +136,36 @@ function storageGroup(ctx) {
     h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' } },
       h('button', { class: 'btn ghost', onclick: async () => { const ok = await db.requestPersistence(); toast(ok ? 'Library protected' : 'The browser declined — installing INK to your home screen usually helps'); refresh(); } }, 'Protect storage'),
       h('button', { class: 'btn ghost', onclick: () => ctx.pickFolder() }, icon('folder', 18), 'Import folder'),
+      h('button', { class: 'btn ghost', onclick: () => duplicatesSheet(refresh) }, 'Find duplicates'),
       h('button', { class: 'btn ghost', onclick: async () => { toast('Rebuilding covers…'); await ctx.rebuildCovers(); toast('Covers rebuilt'); } }, 'Rebuild covers')));
+}
+
+function duplicatesSheet(done) {
+  const groups = lib.findDuplicates();
+  openSheet({ title: 'Duplicates', body: (api) => {
+    if (!groups.length) return h('p', { class: 'row-hint', style: { margin: '8px 0 16px' } }, 'No duplicates found — nothing in your library looks like a repeat.');
+    const del = new Set(), rows = [];
+    const body = h('div', null, h('p', { class: 'row-hint', style: { margin: '4px 0 12px' } }, 'These look like the same book. The copy with the most progress is kept by default — tick any you want removed.'));
+    const btn = h('button', { class: 'btn primary danger', onclick: async () => {
+      if (!del.size) return;
+      if (!await confirmDialog({ title: `Remove ${del.size} ${del.size === 1 ? 'copy' : 'copies'}?`, message: 'Their bookmarks and highlights go with them.', confirmLabel: 'Remove', danger: true })) return;
+      await lib.bulk([...del], 'remove'); toast(del.size + ' removed'); api.close(); done?.();
+    } }, 'Remove selected');
+    const upd = () => { btn.textContent = del.size ? `Remove ${del.size} selected` : 'Remove selected'; btn.disabled = !del.size; };
+    groups.forEach((g) => {
+      g.forEach((b, i) => { if (i > 0) del.add(b.id); });
+      body.append(h('div', { class: 'dup-group' }, g.map((b) => {
+        const row = h('button', { class: 'check-row' + (del.has(b.id) ? ' on' : ''), role: 'checkbox', 'aria-checked': del.has(b.id), onclick: () => {
+          if (del.has(b.id)) del.delete(b.id); else del.add(b.id);
+          row.classList.toggle('on', del.has(b.id)); row.setAttribute('aria-checked', del.has(b.id)); upd();
+        } }, h('span', { class: 'box' }, icon('check', 14)),
+        h('span', null, h('b', null, b.title), h('span', { class: 'row-hint', style: { display: 'block' } }, [b.author, lib.formatName(b), fmtBytes(b.size || 0), Math.round((b.progress || 0) * 100) + '% read'].filter(Boolean).join(' · '))));
+        return row;
+      })));
+    });
+    upd();
+    return h('div', null, body, h('div', { class: 'dialog-actions' }, h('button', { class: 'btn ghost', onclick: () => api.close() }, 'Close'), btn));
+  } });
 }
 
 export async function showStats() {
@@ -204,4 +238,44 @@ function dictionaryGroup() {
       h('button', { class: 'btn ghost', onclick: () => input.click() }, 'Add dictionary file'),
       h('button', { class: 'btn ghost', onclick: async () => { if (await confirmDialog({ title: 'Remove dictionary?', message: 'Words you looked up online stay saved.', confirmLabel: 'Remove' })) { await dict.clearPack(); refresh(); } } }, 'Remove'), input),
     toggleRow({ label: 'Allow online lookups', hint: 'Sends only the selected word to dictionaryapi.dev when it isn’t found offline. Results are saved for offline use.', value: S.get('app.dictOnline'), onChange: (v) => S.set('app.dictOnline', v) }));
+}
+
+function backupGroup(ctx) {
+  const input = h('input', { type: 'file', accept: '.zip,application/zip', style: { display: 'none' } });
+  const note = h('div', { class: 'row-hint' }, '');
+  const bar = h('div', { class: 'progress-line', hidden: true }, h('i', { style: { width: '0%' } }));
+  const prog = (f) => { bar.hidden = false; bar.firstChild.style.width = Math.round(f * 100) + '%'; };
+  const done = () => setTimeout(() => { bar.hidden = true; }, 600);
+  backup.estimate().then((e) => { note.textContent = `${e.books} book${e.books === 1 ? '' : 's'} · about ${fmtBytes(e.bytes)} of files`; });
+  const make = async (includeBooks) => {
+    try {
+      toast('Preparing backup…');
+      const r = await backup.createBackup({ includeBooks, onProgress: prog });
+      backup.saveBlob(r.blob, r.name); done();
+      toast(`Saved ${r.name}`);
+    } catch (e) { done(); toast(e.message || 'Couldn’t create the backup'); }
+  };
+  input.addEventListener('change', async () => {
+    const f = input.files?.[0]; input.value = ''; if (!f) return;
+    try {
+      toast('Restoring…');
+      const r = await backup.restoreBackup(f, { onProgress: prog }); done();
+      await lib.load();
+      toast(`Restored: ${r.booksAdded} book${r.booksAdded === 1 ? '' : 's'} added, ${r.highlights} highlights, ${r.bookmarks} bookmarks`);
+      if (r.skippedNoFile) setTimeout(() => toast(`${r.skippedNoFile} book${r.skippedNoFile === 1 ? ' is' : 's are'} not on this device — import ${r.skippedNoFile === 1 ? 'it' : 'them'} again and re-run the restore to bring back its notes`), 2600);
+    } catch (e) { done(); toast(e.message || 'Couldn’t restore that file'); }
+  });
+  return group('Backup',
+    h('p', { class: 'row-hint', style: { margin: '4px 0 10px' } }, 'INK keeps everything in this browser. A backup is a single file you can keep anywhere, and restore on this or another device.'),
+    note,
+    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', margin: '12px 0' } },
+      h('button', { class: 'btn primary', onclick: () => make(true) }, icon('download', 18), 'Back up everything'),
+      h('button', { class: 'btn ghost', onclick: () => make(false) }, 'Notes & progress only'),
+      h('button', { class: 'btn ghost', onclick: () => input.click() }, 'Restore'), input),
+    bar,
+    h('div', { class: 'row link', role: 'button', tabindex: '0', style: { cursor: 'pointer' }, onclick: async () => {
+      const blob = await backup.exportAllAnnotations();
+      if (!blob) { toast('No highlights or bookmarks yet'); return; }
+      backup.saveBlob(blob, 'INK-highlights.md'); toast('Highlights exported');
+    } }, h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, 'Export all highlights'), h('span', { class: 'row-hint' }, 'One Markdown file, grouped by book and chapter')), icon('chevR', 18)));
 }
