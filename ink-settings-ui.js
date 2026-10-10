@@ -15,6 +15,7 @@ export function renderSettings(root, ctx) {
   inner.append(
     h('header', { class: 'top' }, h('span', { class: 'wordmark small' }, 'INK')),
     h('h1', { class: 'page-title', style: { marginBottom: '8px' } }, 'Settings'),
+    settingsSearch(inner),
     h('button', { class: 'row link', onclick: showStats }, h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, 'Reading statistics'), h('span', { class: 'row-hint' }, 'Time, books finished, pace — private to this device')), icon('chevR', 18)),
 
     group('Appearance',
@@ -53,6 +54,47 @@ export function renderSettings(root, ctx) {
       h('button', { class: 'btn ghost', style: { marginTop: '18px' }, onclick: async () => { if (await confirmDialog({ title: 'Reset settings?', message: 'Your books and progress are not affected.', confirmLabel: 'Reset' })) { ['app', 'reading', 'library', 'pdf', 'comic'].forEach((s) => S.reset(s)); location.reload(); } } }, 'Reset all settings')));
 }
 
+function settingsSearch(inner) {
+  const input = h('input', { type: 'search', class: 'set-search-in', placeholder: 'Search settings', 'aria-label': 'Search settings', autocomplete: 'off' });
+  const empty = h('p', { class: 'row-hint set-empty', hidden: true }, 'No settings match that.');
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    let any = false;
+    inner.querySelectorAll('.group').forEach((g) => {
+      const titleHit = !q || g.querySelector('.group-title')?.textContent.toLowerCase().includes(q);
+      let hits = 0;
+      g.querySelectorAll(':scope > .row, :scope > .field, :scope > .slider, :scope > p, :scope > div').forEach((r) => {
+        const on = titleHit || r.textContent.toLowerCase().includes(q);
+        r.hidden = !on; if (on) hits++;
+      });
+      g.hidden = !titleHit && !hits; if (!g.hidden) any = true;
+    });
+    inner.querySelectorAll(':scope > .row.link').forEach((r) => { r.hidden = !!q && !r.textContent.toLowerCase().includes(q); if (!r.hidden) any = true; });
+    empty.hidden = !q || any;
+  });
+  return h('div', { class: 'set-search' }, icon('search', 18), input, empty);
+}
+
+function themePreview() {
+  const page = h('div', { class: 'tp-page' },
+    h('div', { class: 'tp-h' }, 'Chapter One'),
+    h('p', null, 'The mist rolled in from the sea, soft as breath on glass, and the town below began to forget its own name.'),
+    h('p', null, 'She read by the last of the light, turning each page slowly, as though the book might notice.'));
+  const apply = () => {
+    const r = S.all().reading, t = S.readingThemeFor();
+    page.style.background = t.bg; page.style.color = t.fg;
+    page.style.fontFamily = S.readingFontStack(r);
+    page.style.fontSize = Math.round(Math.min(22, Math.max(13, r.size * 0.8))) + 'px';
+    page.style.lineHeight = String(r.lineHeight);
+    page.style.textAlign = r.align === 'justify' ? 'justify' : 'left';
+    page.style.padding = `14px ${Math.round(Math.min(34, 10 + r.margin * 0.5))}px`;
+  };
+  apply();
+  const off = S.on((k) => { if (!document.body.contains(page) && page.dataset.live) { off(); return; } if (/^(reading|app)\./.test(k)) apply(); });
+  page.dataset.live = '1';
+  return h('div', { class: 'tp-wrap', 'aria-hidden': 'true' }, page);
+}
+
 function readingThemeField() {
   const items = [{ value: 'auto', label: 'Auto', bg: 'linear-gradient(135deg,#f8f6f0 50%,#1e1e21 50%)', fg: '#888' }]
     .concat(Object.entries(S.READING_THEMES).map(([value, t]) => ({ value, label: t.name, bg: t.bg, fg: t.fg })))
@@ -60,7 +102,7 @@ function readingThemeField() {
   const custom = h('div', { style: { display: S.get('reading.theme') === 'custom' ? 'grid' : 'none', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' } },
     colorField('Background', 'reading.customBg'), colorField('Text', 'reading.customFg'));
   const sw = swatches(items, S.get('reading.theme'), (v) => { S.set('reading.theme', v); custom.style.display = v === 'custom' ? 'grid' : 'none'; });
-  return h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Reading theme'), sw, custom,
+  return h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Reading theme'), sw, custom, themePreview(),
     h('div', { class: 'row-hint' }, 'Independent from the app theme — read on warm paper in a dark app if you like.'));
 }
 function colorField(label, path) {

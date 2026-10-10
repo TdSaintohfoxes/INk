@@ -159,8 +159,10 @@ export function toggleRow({ label, hint, value, onChange }) {
 export function field(label, control, hint) {
   return h('div', { class: 'field' }, h('div', { class: 'field-label' }, label), control, hint ? h('div', { class: 'row-hint' }, hint) : null);
 }
+const GROUP_ICONS = { Appearance: 'sun', Reading: 'type', Dictionary: 'book', Library: 'library', Storage: 'folder', Accessibility: 'info', About: 'info' };
 export function group(title, ...children) {
-  return h('section', { class: 'group' }, title ? h('h3', { class: 'group-title' }, title) : null, ...children);
+  const ic = GROUP_ICONS[title];
+  return h('section', { class: 'group' }, title ? h('h3', { class: 'group-title' }, ic ? icon(ic, 16) : null, title) : null, ...children);
 }
 export function swatches(items, value, onChange) {
   const el = h('div', { class: 'swatches', role: 'radiogroup' });
